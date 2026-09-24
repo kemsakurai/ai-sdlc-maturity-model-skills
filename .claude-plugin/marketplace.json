@@ -1,0 +1,17 @@
+{
+  "name": "ai-sdlc-maturity",
+  "owner": {
+    "name": "kemsakurai",
+    "url": "https://github.com/kemsakurai"
+  },
+  "description": "GitHub リポジトリの AI-SDLC 成熟度をアセスメントするスキル",
+  "plugins": [
+    {
+      "name": "ai-sdlc-maturity",
+      "source": "./",
+      "description": "GitHub リポジトリの git 履歴・Issue・PR・Actions を証拠に、AI-SDLC 成熟度を固定の判定基準で採点するスキル",
+      "category": "engineering",
+      "keywords": ["ai-sdlc", "maturity-model", "assessment", "skills"]
+    }
+  ]
+}
