@@ -165,6 +165,12 @@ existing_paths() {
   return 0
 }
 
+# list_file_names <dir> : ディレクトリ直下のファイル名を 1 行ずつ、名前順に出力する（ディレクトリが無ければ何も出さない）
+list_file_names() {
+  [ -d "$1" ] || return 0
+  find "$1" -mindepth 1 -maxdepth 1 -type f -exec basename {} \; | LC_ALL=C sort
+}
+
 # grep_any [-i] <ERE> <path>... : 存在するパスだけを再帰検索し、1 件でも一致すれば 0 を返す。
 # grep は読めないパスが 1 つでもあると、一致があっても終了コード 2 を返すので、先に存在するものだけに絞る。
 grep_any() {
@@ -249,7 +255,7 @@ emit "b.issues_closed_count" "gh issue list --state closed --limit $GH_LABEL_LIM
 ADR_TARGET="${ADR_DIR:-docs/adr}"
 # 索引・テンプレートは ADR として数えない（ファイル名だけでもパスでも一致する）
 ADR_NON_RECORD_REGEX='(^|/)(readme|index|template)[^/]*\.md$'
-adr_files() { ls "$ADR_TARGET" 2>/dev/null | grep -E '\.md$' | grep -viE "$ADR_NON_RECORD_REGEX"; }
+adr_files() { list_file_names "$ADR_TARGET" | grep -E '\.md$' | grep -viE "$ADR_NON_RECORD_REGEX"; }
 
 C_ADR_COUNT="$(adr_files | wc -l | tr -d ' ')"
 emit "c.adr_count" "ls $ADR_TARGET | grep '\\.md$' (excluding README/index/template) | wc -l" "" "$(json_int "$C_ADR_COUNT")"
@@ -320,7 +326,7 @@ emit "e.coverage_gate_configured" "check coverage gate in config/workflows" "" "
 # F. デプロイ・リリース
 # ---------------------------------------------------------------------------
 DEPLOY_WF_PTN="${DEPLOY_WORKFLOW_REGEX:-deploy|release|publish|^cd[-_.]}"
-DEPLOY_FILES="$(ls .github/workflows 2>/dev/null | grep -iE "$DEPLOY_WF_PTN" || true)"
+DEPLOY_FILES="$(list_file_names .github/workflows | grep -iE "$DEPLOY_WF_PTN" || true)"
 
 F_SMOKE=0
 for df in $DEPLOY_FILES; do
@@ -406,7 +412,7 @@ emit "j.dependabot_or_renovate_present" "check dependabot/renovate" "" "$(json_b
 
 # キー名は互換のため codeql のままだが、CodeQL 以外のセキュリティ系ワークフローも対象にする
 J_SECURITY_WF="0"
-{ ls .github/workflows 2>/dev/null | grep -iE 'codeql|security|audit|snyk|trivy|semgrep' >/dev/null 2>&1; } && J_SECURITY_WF="1"
+{ list_file_names .github/workflows | grep -iE 'codeql|security|audit|snyk|trivy|semgrep' >/dev/null 2>&1; } && J_SECURITY_WF="1"
 emit "j.codeql_security_workflow_present" "check security workflows (codeql/snyk/trivy/semgrep/...)" "" "$(json_bool "$J_SECURITY_WF")"
 
 # ---------------------------------------------------------------------------
