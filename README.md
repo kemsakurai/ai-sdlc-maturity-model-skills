@@ -1,5 +1,7 @@
 # ai-sdlc-maturity-model-skills
 
+> **English summary** — An agent skill (Claude Code `SKILL.md` format) that assesses how maturely a team uses AI across its software development lifecycle (AI-SDLC). It collects read-only evidence from a GitHub repository — git history, files, Issues, PRs and GitHub Actions runs — and scores 16 items on a fixed 7-level scale (−1 to 5) adapted from DEFRA's AI-SDLC Maturity Assessment and Gigacore's AI-Maturity-Model. Because only what lives on GitHub counts as evidence, processes run elsewhere score low: treat the output as a draft to discuss with your team, not a final verdict. The skill, its criteria and this README are written in Japanese. Licensed under MIT.
+
 GitHub リポジトリの git 履歴・ファイル・Issue・PR・GitHub Actions の状況をもとに、AI を組み込んだソフトウェア開発ライフサイクル（AI-SDLC）の成熟度をアセスメントするエージェントスキルです。
 
 | スキル | 呼び出し | 内容 |
@@ -18,6 +20,8 @@ GitHub リポジトリの git 履歴・ファイル・Issue・PR・GitHub Action
 
 - 証拠は **GitHub 上にあるものだけ** です。口頭で合意している手順、Slack や Notion などの別ツールで回しているふりかえり、社内の監視ダッシュボードといった、GitHub で管理していないプロセスは拾えません。そのようなプロセスが多いチームでは実態より **低く** 採点されるので、結果は **参考情報** として扱ってください。
 - 出力は確定した評価ではなく、**アセスメントのたたき台（ドラフト）** です。チームのメンバーと一緒に、ドラフトをもとに「この項目は実際にはこう回している」「ここは確かに弱い」と話し合う使い方をおすすめします。話し合いで分かった GitHub の外の実態は、親 Issue にコメントとして残しておくと次回の再評価で役立ちます。
+
+どんなレポートが出るかは、架空のリポジトリで作った [出力例](docs/example-report.md) を見てください。
 
 ## 必要なもの
 
@@ -87,6 +91,8 @@ ln -s ~/ai-sdlc-maturity-model-skills/skills/assessing-ai-sdlc-maturity ~/.claud
 .
 ├── .claude-plugin/            # Claude Code プラグイン / マーケットプレイスの定義
 ├── .github/workflows/test.yml # CI（shellcheck と tests/ の実行）
+├── docs/
+│   └── example-report.md      # 出力例（架空のリポジトリ）
 ├── tests/
 │   ├── template_test.sh       # 証拠収集テンプレートの回帰テスト
 │   └── consistency_test.sh    # 版番号・証拠キーのファイル間の整合性チェック
