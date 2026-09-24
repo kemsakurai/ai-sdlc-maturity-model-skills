@@ -41,7 +41,8 @@ done
 if [ -n "$V_PLUGIN" ] && [ "$ALL_SAME" = "1" ]; then pass "版番号がすべてのファイルでそろっている"; else fail "版番号がすべてのファイルでそろっている"; fi
 
 # --- 証拠キー -----------------------------------------------------------------
-KEYS_TPL="$(grep -oE 'emit "[a-p]\.[a-z0-9_]+"' "$TPL" | sed -E 's/emit "(.*)"/\1/' | sort -u)"
+# キーを出力する関数（emit / emit_gh_failure / gh_int_key / label_key）の第 1 引数を拾う
+KEYS_TPL="$(grep -oE '(emit|emit_gh_failure|gh_int_key|label_key) "[a-p]\.[a-z0-9_]+"' "$TPL" | sed -E 's/^[a-z_]+ "(.*)"$/\1/' | sort -u)"
 KEYS_DOC="$(grep -oE '^\| `[a-p]\.[a-z0-9_]+`' "$SKILL_DIR/references/evidence-keys.md" | sed -E 's/^\| `(.*)`/\1/' | sort -u)"
 KEYS_CRIT="$(grep -E '^参照する証拠キー' "$SKILL_DIR/criteria.md" | grep -oE '`[a-p]\.[a-z0-9_]+`' | tr -d '`' | sort -u)"
 
