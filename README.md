@@ -39,7 +39,7 @@ mkdir -p ~/.claude/skills
 ln -s ~/ai-sdlc-maturity-model-skills/skills/assessing-ai-sdlc-maturity ~/.claude/skills/assessing-ai-sdlc-maturity
 ```
 
-更新は clone したディレクトリで `git pull` するだけです。symlink を使わずにディレクトリをコピーしてもかまいません。
+更新は clone したディレクトリで `git pull` するだけです。symlink を使わずに `skills/assessing-ai-sdlc-maturity` ディレクトリをコピーしてもかまいません。著作権・ライセンスの表示は `SKILL.md` の末尾と `criteria.md` の「出典とライセンス」節に入っているので、コピーするときはそれらを消さないでください。
 
 ### Claude Code のプラグインとして入れる
 
@@ -62,12 +62,12 @@ ln -s ~/ai-sdlc-maturity-model-skills/skills/assessing-ai-sdlc-maturity ~/.claud
 
 初回の流れは次のとおりです。
 
-1. リポジトリの構成（言語、テストの書き方、CI、ADR の場所、ラベル体系など）を調べ、同梱のテンプレートから、そのリポジトリ専用の証拠収集スクリプト（既定は `.agents/collect-evidence.sh`）を生成します。配置先は実行時に確認されます。生成したパスは `AGENTS.md` か `CLAUDE.md` に 1 行記録されます。
+1. リポジトリの構成（言語、テストの書き方、pre-commit・タスクランナー・CI、ADR の場所、ラベル体系など）を調べ、同梱のテンプレートから、そのリポジトリ専用の証拠収集スクリプト（既定は `scripts/ai-sdlc/collect-evidence.sh`）を生成します。配置先は実行時に確認されます。生成したパスは、エージェント向けの指示書（`AGENTS.md` / `CLAUDE.md` など。無ければ README）に 1 行記録されます。
 2. スクリプトを実行して証拠の JSON を得ます。スクリプトは読み取り専用で、`.env` には触れません。既定の集計期間は 90 日です。
 3. `criteria.md` に沿って採点し、結果を出力します。
 4. 結果と JSON を GitHub の親 Issue に記録し、推奨アクションを 1 件ずつ Issue にします。
 
-生成されたスクリプトはリポジトリにコミットしてください。次回からはそれを使うので、再評価で同じ物差しを保てます。
+生成されたスクリプトはリポジトリにコミットしてください。次回からはそれを使うので、再評価で同じ物差しを保てます。スクリプトのヘッダーには MIT の著作権表示が入っています。コミットするときも残してください。
 
 ## 採点の考え方
 
@@ -101,7 +101,7 @@ ln -s ~/ai-sdlc-maturity-model-skills/skills/assessing-ai-sdlc-maturity ~/.claud
 
 このリポジトリのコードと文書は [MIT License](LICENSE) で公開しています。ただし、以下の第三者の資料はそれぞれの権利者とライセンスに従います。
 
-- **DEFRA「AI-SDLC Maturity Assessment」**（<https://github.com/DEFRA/ai-sdlc-maturity-assessment>）：7 段階の尺度、次元の名前、階層準拠の採点法を参照しています。項目別の判定基準は、各次元ページの Sample assessment questions を参考に独自に翻案・再構成したものです。DEFRA の尺度の定義文は収録していないので、原文はリンク先を参照してください。
+- **DEFRA「AI-SDLC Maturity Assessment」**（<https://github.com/DEFRA/ai-sdlc-maturity-assessment>）：7 段階の尺度、次元の名前、階層準拠の採点法を参照しています。項目別の判定基準は、各次元ページにある Sample assessment questions の観点を参考にし、文言は独自に書き起こしたものです。DEFRA の文章は収録していないので、原文はリンク先を参照してください。
 - **Gigacore「AI-Maturity-Model」**（<https://github.com/Gigacore/AI-Maturity-Model>、[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)）：6 つの軸とレベル名を、日本語化して項目に対応づけるという改変を加えて使っています。
 
 このスキルは DEFRA とも Gigacore とも無関係の非公式なものです。
