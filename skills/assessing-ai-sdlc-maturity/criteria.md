@@ -1,12 +1,13 @@
-# 判定基準シート 0.0.1
+# 判定基準シート 0.0.2
 
-正本。項目の追加や文言の変更をしたら、版を上げてリポジトリの `CHANGELOG.md` に理由を残す。再評価は前回と同じ版で行う（版が違うと採点を比較できない）。
+正本。項目の追加や文言の変更をしたら、版を上げてリポジトリの CHANGELOG（https://github.com/kemsakurai/ai-sdlc-maturity-model-skills/blob/main/CHANGELOG.md）に理由を残す。再評価は前回と同じ版で行う（版が違うと採点を比較できない）。
 
-## 出典
+## 出典とライセンス
 
-- 尺度（−1〜5 の 7 段階）・次元名・項目別基準の発想は、[DEFRA「AI-SDLC Maturity Assessment」](https://github.com/DEFRA/ai-sdlc-maturity-assessment) の各次元ページにある Sample assessment questions を参考に、人間と AI エージェントで運用するリポジトリ向けに独自に翻案・再構成した。DEFRA の尺度の定義文は収録していないので、原文は上記リンクを参照すること。
-- 軸（6 軸）とレベル名（Exploratory〜Transformational）は [Gigacore「AI-Maturity-Model」](https://github.com/Gigacore/AI-Maturity-Model)（CC BY 4.0）を改変して利用した。
-- このシートの独自部分（読み替え・項目の統合・証拠キー・採点注記）は MIT License。
+- [DEFRA「AI-SDLC Maturity Assessment」](https://github.com/DEFRA/ai-sdlc-maturity-assessment)：7 段階の尺度の区分、次元の名前、階層準拠の採点法を参照した。項目別の判定基準は、各次元ページにある Sample assessment questions の観点を参考にし、人間と AI エージェントで運用するリポジトリ向けに文言を独自に書き起こした。DEFRA の文章は収録していないので、原文は上記リンクを参照すること。
+- [Gigacore「AI-Maturity-Model」](https://github.com/Gigacore/AI-Maturity-Model)（[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)）：6 つの軸とレベル名（Exploratory〜Transformational）を、日本語化して項目に対応づけるという改変を加えて利用した。
+- 上記以外（読み替え・項目の構成・判定基準の文言・証拠キー・採点注記）は MIT License, Copyright (c) 2026 kemsakurai（https://github.com/kemsakurai/ai-sdlc-maturity-model-skills）。このファイルを複製・再配布するときは、この節を残すこと。
+- このシートは DEFRA とも Gigacore とも無関係の非公式なもの。
 
 ## 尺度（7 段階）
 
