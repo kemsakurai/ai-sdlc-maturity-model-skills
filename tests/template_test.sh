@@ -1,0 +1,121 @@
+#!/usr/bin/env bash
+# collect-evidence.template.sh の回帰テスト。
+# 境界ケースを入れた使い捨ての git リポジトリを作り、テンプレートから生成したスクリプトの出力を検査する。
+# GitHub API には触れない（リモートの無いリポジトリなので gh の呼び出しは失敗し、0 や空になる）。
+#
+# 使い方: bash tests/template_test.sh
+# 必要なコマンド: bash, git (2.22 以上), jq
+set -u
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+TPL="$ROOT/skills/assessing-ai-sdlc-maturity/templates/collect-evidence.template.sh"
+WORK="$(mktemp -d)"
+trap 'rm -rf "$WORK"' EXIT
+
+FAILED=0
+pass() { printf 'ok   - %s\n' "$1"; }
+fail() { printf 'FAIL - %s\n' "$1"; FAILED=1; }
+
+# check <説明> <JSON ファイル> <jq の条件式>
+check() {
+  if jq -e "$3" "$2" >/dev/null 2>&1; then pass "$1"; else fail "$1 ($3)"; fi
+}
+
+# --- テンプレートから 2 通りのスクリプトを生成する -------------------------------
+# default: すべての {{...}} を空にする（スクリプト内の既定値を使う）
+sed -E 's/\{\{[A-Z_]+\}\}//g' "$TPL" > "$WORK/default.sh"
+# example: 設定ブロックのコメントにある例をそのまま埋める
+sed -E \
+  -e 's#\{\{TEST_FILE_FIND_EXPR\}\}#-name "test_*.py" -o -name "*.test.ts" -o -name "*_test.go"#' \
+  -e 's#\{\{TEST_CASE_REGEX\}\}#def test_|it\\(|test\\(#' \
+  -e 's/\{\{[A-Z_]+\}\}//g' "$TPL" > "$WORK/example.sh"
+
+for v in default example; do
+  if bash -n "$WORK/$v.sh"; then pass "$v: bash -n"; else fail "$v: bash -n"; fi
+done
+
+# --- 境界ケースを入れたリポジトリを作る ---------------------------------------
+REPO="$WORK/repo"
+mkdir -p "$REPO"
+(
+  cd "$REPO" || exit 1
+  git init -q -b main
+  git config user.name "Alice Example"
+  git config user.email alice@example.com
+  git config commit.gpgsign false
+
+  mkdir -p docs/adr tests .github/workflows .claude/worktrees/x/tests
+  # ADR: 索引・テンプレートは数えない。adr-NNN 形式と NNNN 形式が混ざり、3 番が重複している
+  printf '# index\n' > docs/adr/README.md
+  printf '# template\n' > docs/adr/template.md
+  printf 'a\n' > docs/adr/adr-001-a.md
+  printf 'b\n' > docs/adr/adr-002-b.md
+  printf 'c\n' > docs/adr/0003-c.md
+  printf 'd\n' > docs/adr/0003-d.md
+  # テストファイルは 1 件だけ（worktree 内の同じファイルは数えない）
+  printf 'def test_a():\n    pass\ndef test_b():\n    pass\n' > tests/test_x.py
+  cp tests/test_x.py .claude/worktrees/x/tests/test_x.py
+  # 検査を呼ぶのは pre-commit だけ（Taskfile / Makefile は無い）
+  printf 'repos:\n- repo: local\n  hooks:\n  - id: lint-imports\n    entry: lint-imports\n  - id: drift\n    entry: check-drift\n' > .pre-commit-config.yaml
+  printf '[importlinter]\n' > .importlinter
+  # デプロイ系ワークフロー 2 件。rollback の記載は片方だけ
+  printf 'jobs:\n  a:\n    steps:\n    - run: curl health\n' > .github/workflows/deploy-a.yml
+  printf 'jobs:\n  b:\n    steps:\n    - run: echo rollback\n' > .github/workflows/deploy-b.yml
+
+  git add -A
+  git commit -q -m "init"
+  # AI と人間の共著者が混在。キーの大文字小文字も混在
+  git commit -q --allow-empty -m "feat: x (#1)
+
+Co-authored-by: Claude Opus <noreply@anthropic.com>
+Co-authored-by: Human Friend <friend@example.com>"
+  git commit -q --allow-empty -m "feat: y
+
+Co-Authored-By: GitHub Copilot <copilot@github.com>"
+  git commit -q --allow-empty -m "chore: z
+
+Co-authored-by: Only Human <h@example.com>"
+  # merge commit 方式の PR
+  git checkout -q -b topic
+  git commit -q --allow-empty -m "topic work"
+  git checkout -q main
+  git merge -q --no-ff topic -m "Merge pull request #2 from x/topic"
+) || { echo "fixture の作成に失敗"; exit 1; }
+
+# --- 実行して検査する -------------------------------------------------------
+for v in default example; do
+  OUT="$WORK/$v.json"
+  bash "$WORK/$v.sh" "$REPO" > "$OUT" 2> "$WORK/$v.err"
+  if [ -s "$WORK/$v.err" ]; then fail "$v: stderr が空"; sed 's/^/     /' "$WORK/$v.err"; else pass "$v: stderr が空"; fi
+  check "$v: 証拠キーが 44 個"                 "$OUT" '.evidence | length == 44'
+  check "$v: header の版がそろっている"         "$OUT" '.header.skill_version == .header.criteria_version'
+  check "$v: c.adr_count は索引・テンプレートを除く" "$OUT" '.evidence["c.adr_count"].value == 4'
+  check "$v: c.adr_duplicates は番号 3 だけ"     "$OUT" '.evidence["c.adr_duplicates"].value == ["3"]'
+  check "$v: c.arch_lint_enforced（pre-commit のみ）" "$OUT" '.evidence["c.arch_lint_enforced"].value == true'
+  check "$v: h.data_integrity_gate_configured"  "$OUT" '.evidence["h.data_integrity_gate_configured"].value == true'
+  check "$v: e.test_files_count は worktree を除く" "$OUT" '.evidence["e.test_files_count"].value == 1'
+  check "$v: e.test_cases_count（ファイル 1 件）"  "$OUT" '.evidence["e.test_cases_count"].value == 2'
+  check "$v: f.rollback_doc_present（2 件中 1 件）" "$OUT" '.evidence["f.rollback_doc_present"].value == true'
+  check "$v: f.smoke_steps"                     "$OUT" '.evidence["f.smoke_steps"].value == 1'
+  check "$v: d.pr_commit_ratio_window（squash と merge の混在）" "$OUT" '.evidence["d.pr_commit_ratio_window"].value == 0.4'
+  check "$v: k.coauthored_count は AI の共著者だけ" "$OUT" '.evidence["k.coauthored_count"].value == 2'
+  check "$v: k.coauthored_by_model"             "$OUT" '[.evidence["k.coauthored_by_model"].value[].model] | sort == ["Claude Opus", "GitHub Copilot"]'
+  check "$v: i.local_guardrail_hooks_count"     "$OUT" '.evidence["i.local_guardrail_hooks_count"].value == 1'
+  check "$v: 実名がそのまま出る（匿名化なし）"    "$OUT" '.header.authors_anonymized == false and .header.authors_top5[0].author == "Alice Example"'
+done
+
+# --anonymize-authors
+OUT="$WORK/anon.json"
+bash "$WORK/default.sh" "$REPO" --anonymize-authors > "$OUT" 2>/dev/null
+check "anonymize: authors_anonymized が true"  "$OUT" '.header.authors_anonymized == true'
+check "anonymize: 著者名が author-N になる"    "$OUT" '[.header.authors_top5[].author] == ["author-1"]'
+if grep -q "Alice Example" "$OUT"; then fail "anonymize: 出力に実名が残っていない"; else pass "anonymize: 出力に実名が残っていない"; fi
+
+# デプロイ系ワークフローが 0 件なら rollback は false
+rm "$REPO"/.github/workflows/deploy-*.yml
+OUT="$WORK/nodeploy.json"
+bash "$WORK/default.sh" "$REPO" > "$OUT" 2>/dev/null
+check "デプロイ系ワークフロー 0 件で f.rollback_doc_present が false" "$OUT" '.evidence["f.rollback_doc_present"].value == false'
+
+if [ "$FAILED" -ne 0 ]; then echo "テストに失敗しました"; exit 1; fi
+echo "すべてのテストに合格しました"

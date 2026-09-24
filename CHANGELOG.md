@@ -2,6 +2,21 @@
 
 このプロジェクトは [Semantic Versioning](https://semver.org/lang/ja/) に従います。スキル本体と判定基準シートは 1 つの版番号を共有します。`criteria.md` の判定基準を変えたときは、以前の採点と比較できなくなるので、少なくともマイナーバージョンを上げます。patch だけが違う版どうしの採点は比較できます。
 
+## [0.1.1] - 2026-09-24
+
+判定基準（`criteria.md` の項目・レベルの文言）は 0.1.0 と同じです。`--anonymize-authors` を付けずに実行したときの証拠の値も 0.1.0 と同じです。ただし `l.pr_authors_window` は、件数の多い順に並ぶようになりました。
+
+### 追加
+
+- 証拠収集スクリプトに `--anonymize-authors` を追加した。コミット著者名と PR 作成者のログイン名を `author-1`・`pr-author-1` のような仮の名前に置き換える（bot は除く）。出力 JSON の `header.authors_anonymized` に、置き換えたかどうかが残る。
+- `tests/template_test.sh`（証拠収集テンプレートの回帰テスト）と `tests/consistency_test.sh`（版番号・証拠キーのファイル間の整合性チェック）を追加し、GitHub Actions で shellcheck とあわせて実行するようにした。
+
+### 変更
+
+- `SKILL.md`：GitHub への書き込み（Issue の作成・コメント）の前に、投稿先と内容を示してユーザーの確認を取る手順を加えた。Public リポジトリでは `--anonymize-authors` を付けて収集するようにした。
+- README：スキルが GitHub に書き込むこと、証拠 JSON に個人名が含まれることと、その扱いを書いた。
+- `l.pr_authors_window` を件数の多い順に並べるようにした（`header.authors_top5` とそろえた）。
+
 ## [0.1.0] - 2026-09-24
 
 `criteria.md` の判定基準の文言を変えたので、minor バージョンを上げました。変えたのは、特定のリポジトリの運用に由来する用語の言い換えだけで、各レベルが求める水準は変えていません。それでも 0.0.x の採点と比べるときは、下の「判定基準の文言」に挙げた項目のスコアが、言い換えで変わっていないかを確かめてください。証拠収集スクリプトが出力する値は 0.0.2 と同じです。
@@ -82,6 +97,7 @@
   - 証拠キーの辞書 `references/evidence-keys.md`
 - Claude Code のプラグイン / マーケットプレイスの定義
 
+[0.1.1]: https://github.com/kemsakurai/ai-sdlc-maturity-model-skills/releases/tag/v0.1.1
 [0.1.0]: https://github.com/kemsakurai/ai-sdlc-maturity-model-skills/releases/tag/v0.1.0
 [0.0.2]: https://github.com/kemsakurai/ai-sdlc-maturity-model-skills/releases/tag/v0.0.2
 [0.0.1]: https://github.com/kemsakurai/ai-sdlc-maturity-model-skills/releases/tag/v0.0.1

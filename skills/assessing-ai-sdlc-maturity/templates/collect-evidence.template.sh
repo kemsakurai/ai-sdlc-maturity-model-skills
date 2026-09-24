@@ -1,27 +1,34 @@
 #!/usr/bin/env bash
 # =============================================================================
-# 証拠収集スクリプト（読み取り専用、criteria.md 0.1.0 準拠）
+# 証拠収集スクリプト（読み取り専用、criteria.md 0.1.1 準拠）
 # このファイルは assessing-ai-sdlc-maturity スキルによりプロジェクト固有に生成されました。
 # https://github.com/kemsakurai/ai-sdlc-maturity-model-skills
 #
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2026 kemsakurai
 #
-# 使い方: collect-evidence.sh [対象リポジトリのパス] [--window-days N]
+# 使い方: collect-evidence.sh [対象リポジトリのパス] [--window-days N] [--anonymize-authors]
+#   --anonymize-authors  コミット著者名と PR 作成者のログイン名を author-1, author-2, … に置き換える。
+#                        証拠 JSON を公開の Issue などに投稿するときに使う。
 # 必要なコマンド: git (2.22 以上), gh (認証済み), jq
 # =============================================================================
 set -u
 
-CRITERIA_VERSION="0.1.0"
-SKILL_VERSION="0.1.0"
+CRITERIA_VERSION="0.1.1"
+SKILL_VERSION="0.1.1"
 WINDOW_DAYS=90
 TARGET_PATH="."
+ANONYMIZE_AUTHORS=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --window-days)
       WINDOW_DAYS="$2"
       shift 2
+      ;;
+    --anonymize-authors)
+      ANONYMIZE_AUTHORS=1
+      shift
       ;;
     *)
       TARGET_PATH="$1"
@@ -173,7 +180,18 @@ grep_any() {
 # regex_to_gh_query <a|b|c> : GitHub 検索用に `a OR b OR c` へ変換する
 regex_to_gh_query() { printf '%s' "$1" | sed 's/|/ OR /g'; }
 
-AUTHORS_TOP5_JSON="$(git log --format='%an' | sort | uniq -c | sort -rn | head -5 | uniq_c_to_array author)"
+# anonymize_authors <prefix> : [{author, count}, …] の author を <prefix>-1, <prefix>-2, … に置き換える。
+# --anonymize-authors が無いときは何もしない。bot（`[bot]` で終わる名前、`app/` で始まるログイン）は置き換えない。
+anonymize_authors() {
+  if [ "$ANONYMIZE_AUTHORS" = "1" ]; then
+    jq --arg p "$1" '[to_entries[] | .key as $i | .value
+      | if (.author | test("\\[bot\\]$|^app/"; "i")) then . else .author = "\($p)-\($i + 1)" end]'
+  else
+    cat
+  fi
+}
+
+AUTHORS_TOP5_JSON="$(git log --format='%an' | sort | uniq -c | sort -rn | head -5 | uniq_c_to_array author | anonymize_authors author)"
 SINGLE_AUTHOR="$(echo "$AUTHORS_TOP5_JSON" | jq 'length <= 1')"
 
 # gh の一覧取得の安全上限（値が上限に張り付いていたら、実数はもっと多い）
@@ -420,7 +438,7 @@ L_PR_STATS_JSON="$(gh pr list --state merged --search "merged:>=$WINDOW_START" -
 emit "l.pr_review_stats_window" "gh pr list merged review stats in window" "$GH_LIMIT" "$L_PR_STATS_JSON"
 
 L_PR_AUTHORS_JSON="$(gh pr list --state merged --search "merged:>=$WINDOW_START" --json author -L "$GH_LIMIT" -q '.[].author.login' 2>/dev/null | \
-  sort | uniq -c | uniq_c_to_array author || echo '[]')"
+  sort | uniq -c | sort -rn | uniq_c_to_array author | anonymize_authors pr-author || echo '[]')"
 emit "l.pr_authors_window" "gh pr list merged authors in window" "$GH_LIMIT" "$L_PR_AUTHORS_JSON"
 
 # ---------------------------------------------------------------------------
@@ -490,6 +508,7 @@ jq -n \
   --argjson window_days "$WINDOW_DAYS" \
   --argjson authors_top5 "$AUTHORS_TOP5_JSON" \
   --argjson single_author "$SINGLE_AUTHOR" \
+  --argjson authors_anonymized "$(json_bool "$ANONYMIZE_AUTHORS")" \
   --argjson evidence "$EVIDENCE_JSON" \
   '{
     header: {
@@ -500,7 +519,8 @@ jq -n \
       skill_version: $skill_version,
       window: {start: $window_start, end: $window_end, days: $window_days},
       authors_top5: $authors_top5,
-      single_author: $single_author
+      single_author: $single_author,
+      authors_anonymized: $authors_anonymized
     },
     evidence: $evidence
   }'

@@ -12,11 +12,12 @@
     "repository": "owner/name",
     "head_sha": "…",
     "assessed_at": "YYYY-MM-DD",
-    "criteria_version": "0.1.0",
-    "skill_version": "0.1.0",
+    "criteria_version": "0.1.1",
+    "skill_version": "0.1.1",
     "window": {"start": "YYYY-MM-DD", "end": "YYYY-MM-DD", "days": 90},
     "authors_top5": [{"author": "…", "count": 0}],
-    "single_author": false
+    "single_author": false,
+    "authors_anonymized": false
   },
   "evidence": {
     "<key>": {"value": "…", "command": "…", "limit": null, "collected_at": "…"}
@@ -28,6 +29,11 @@
 - `command`：値を出したコマンドの要約
 - `limit`：`gh` の取得件数の上限。値がこの上限に張り付いているときは、実数がもっと多い可能性がある
 - `single_author`：コミット著者が 1 名なら `true`。`criteria.md` の N/A 注記を当てるかどうかの判断に使う
+- `authors_anonymized`：`--anonymize-authors` を付けて実行したなら `true`。このとき `header.authors_top5` と `l.pr_authors_window` の名前は `author-1`・`pr-author-1` のような仮の名前になる（bot は除く）。件数や順位は変わらない
+
+## 個人名が含まれるキー
+
+`header.authors_top5`（コミット著者名）と `l.pr_authors_window`（PR 作成者のログイン名）には個人名が入る。`k.coauthored_by_model` は AI エージェントの名前だけを数えるので、通常は個人名を含まない。証拠 JSON を公開の場所（Public リポジトリの Issue 等）に投稿するときは、`--anonymize-authors` を付けて実行する。
 
 ## 時間窓
 
