@@ -1,0 +1,24 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: shellcheck
+        run: shellcheck --severity=warning skills/assessing-ai-sdlc-maturity/templates/collect-evidence.template.sh tests/*.sh
+
+      - name: consistency test
+        run: bash tests/consistency_test.sh
+
+      - name: template test
+        run: bash tests/template_test.sh

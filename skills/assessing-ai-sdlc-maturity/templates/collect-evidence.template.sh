@@ -1,27 +1,34 @@
 #!/usr/bin/env bash
 # =============================================================================
-# 証拠収集スクリプト（読み取り専用、criteria.md 0.1.0 準拠）
+# 証拠収集スクリプト（読み取り専用、criteria.md 0.1.1 準拠）
 # このファイルは assessing-ai-sdlc-maturity スキルによりプロジェクト固有に生成されました。
 # https://github.com/kemsakurai/ai-sdlc-maturity-model-skills
 #
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2026 kemsakurai
 #
-# 使い方: collect-evidence.sh [対象リポジトリのパス] [--window-days N]
+# 使い方: collect-evidence.sh [対象リポジトリのパス] [--window-days N] [--anonymize-authors]
+#   --anonymize-authors  コミット著者名と PR 作成者のログイン名を author-1, author-2, … に置き換える。
+#                        証拠 JSON を公開の Issue などに投稿するときに使う。
 # 必要なコマンド: git (2.22 以上), gh (認証済み), jq
 # =============================================================================
 set -u
 
-CRITERIA_VERSION="0.1.0"
-SKILL_VERSION="0.1.0"
+CRITERIA_VERSION="0.1.1"
+SKILL_VERSION="0.1.1"
 WINDOW_DAYS=90
 TARGET_PATH="."
+ANONYMIZE_AUTHORS=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --window-days)
       WINDOW_DAYS="$2"
       shift 2
+      ;;
+    --anonymize-authors)
+      ANONYMIZE_AUTHORS=1
+      shift
       ;;
     *)
       TARGET_PATH="$1"
@@ -158,6 +165,12 @@ existing_paths() {
   return 0
 }
 
+# list_file_names <dir> : ディレクトリ直下のファイル名を 1 行ずつ、名前順に出力する（ディレクトリが無ければ何も出さない）
+list_file_names() {
+  [ -d "$1" ] || return 0
+  find "$1" -mindepth 1 -maxdepth 1 -type f -exec basename {} \; | LC_ALL=C sort
+}
+
 # grep_any [-i] <ERE> <path>... : 存在するパスだけを再帰検索し、1 件でも一致すれば 0 を返す。
 # grep は読めないパスが 1 つでもあると、一致があっても終了コード 2 を返すので、先に存在するものだけに絞る。
 grep_any() {
@@ -173,7 +186,18 @@ grep_any() {
 # regex_to_gh_query <a|b|c> : GitHub 検索用に `a OR b OR c` へ変換する
 regex_to_gh_query() { printf '%s' "$1" | sed 's/|/ OR /g'; }
 
-AUTHORS_TOP5_JSON="$(git log --format='%an' | sort | uniq -c | sort -rn | head -5 | uniq_c_to_array author)"
+# anonymize_authors <prefix> : [{author, count}, …] の author を <prefix>-1, <prefix>-2, … に置き換える。
+# --anonymize-authors が無いときは何もしない。bot（`[bot]` で終わる名前、`app/` で始まるログイン）は置き換えない。
+anonymize_authors() {
+  if [ "$ANONYMIZE_AUTHORS" = "1" ]; then
+    jq --arg p "$1" '[to_entries[] | .key as $i | .value
+      | if (.author | test("\\[bot\\]$|^app/"; "i")) then . else .author = "\($p)-\($i + 1)" end]'
+  else
+    cat
+  fi
+}
+
+AUTHORS_TOP5_JSON="$(git log --format='%an' | sort | uniq -c | sort -rn | head -5 | uniq_c_to_array author | anonymize_authors author)"
 SINGLE_AUTHOR="$(echo "$AUTHORS_TOP5_JSON" | jq 'length <= 1')"
 
 # gh の一覧取得の安全上限（値が上限に張り付いていたら、実数はもっと多い）
@@ -231,7 +255,7 @@ emit "b.issues_closed_count" "gh issue list --state closed --limit $GH_LABEL_LIM
 ADR_TARGET="${ADR_DIR:-docs/adr}"
 # 索引・テンプレートは ADR として数えない（ファイル名だけでもパスでも一致する）
 ADR_NON_RECORD_REGEX='(^|/)(readme|index|template)[^/]*\.md$'
-adr_files() { ls "$ADR_TARGET" 2>/dev/null | grep -E '\.md$' | grep -viE "$ADR_NON_RECORD_REGEX"; }
+adr_files() { list_file_names "$ADR_TARGET" | grep -E '\.md$' | grep -viE "$ADR_NON_RECORD_REGEX"; }
 
 C_ADR_COUNT="$(adr_files | wc -l | tr -d ' ')"
 emit "c.adr_count" "ls $ADR_TARGET | grep '\\.md$' (excluding README/index/template) | wc -l" "" "$(json_int "$C_ADR_COUNT")"
@@ -302,7 +326,7 @@ emit "e.coverage_gate_configured" "check coverage gate in config/workflows" "" "
 # F. デプロイ・リリース
 # ---------------------------------------------------------------------------
 DEPLOY_WF_PTN="${DEPLOY_WORKFLOW_REGEX:-deploy|release|publish|^cd[-_.]}"
-DEPLOY_FILES="$(ls .github/workflows 2>/dev/null | grep -iE "$DEPLOY_WF_PTN" || true)"
+DEPLOY_FILES="$(list_file_names .github/workflows | grep -iE "$DEPLOY_WF_PTN" || true)"
 
 F_SMOKE=0
 for df in $DEPLOY_FILES; do
@@ -388,7 +412,7 @@ emit "j.dependabot_or_renovate_present" "check dependabot/renovate" "" "$(json_b
 
 # キー名は互換のため codeql のままだが、CodeQL 以外のセキュリティ系ワークフローも対象にする
 J_SECURITY_WF="0"
-{ ls .github/workflows 2>/dev/null | grep -iE 'codeql|security|audit|snyk|trivy|semgrep' >/dev/null 2>&1; } && J_SECURITY_WF="1"
+{ list_file_names .github/workflows | grep -iE 'codeql|security|audit|snyk|trivy|semgrep' >/dev/null 2>&1; } && J_SECURITY_WF="1"
 emit "j.codeql_security_workflow_present" "check security workflows (codeql/snyk/trivy/semgrep/...)" "" "$(json_bool "$J_SECURITY_WF")"
 
 # ---------------------------------------------------------------------------
@@ -420,7 +444,7 @@ L_PR_STATS_JSON="$(gh pr list --state merged --search "merged:>=$WINDOW_START" -
 emit "l.pr_review_stats_window" "gh pr list merged review stats in window" "$GH_LIMIT" "$L_PR_STATS_JSON"
 
 L_PR_AUTHORS_JSON="$(gh pr list --state merged --search "merged:>=$WINDOW_START" --json author -L "$GH_LIMIT" -q '.[].author.login' 2>/dev/null | \
-  sort | uniq -c | uniq_c_to_array author || echo '[]')"
+  sort | uniq -c | sort -rn | uniq_c_to_array author | anonymize_authors pr-author || echo '[]')"
 emit "l.pr_authors_window" "gh pr list merged authors in window" "$GH_LIMIT" "$L_PR_AUTHORS_JSON"
 
 # ---------------------------------------------------------------------------
@@ -490,6 +514,7 @@ jq -n \
   --argjson window_days "$WINDOW_DAYS" \
   --argjson authors_top5 "$AUTHORS_TOP5_JSON" \
   --argjson single_author "$SINGLE_AUTHOR" \
+  --argjson authors_anonymized "$(json_bool "$ANONYMIZE_AUTHORS")" \
   --argjson evidence "$EVIDENCE_JSON" \
   '{
     header: {
@@ -500,7 +525,8 @@ jq -n \
       skill_version: $skill_version,
       window: {start: $window_start, end: $window_end, days: $window_days},
       authors_top5: $authors_top5,
-      single_author: $single_author
+      single_author: $single_author,
+      authors_anonymized: $authors_anonymized
     },
     evidence: $evidence
   }'

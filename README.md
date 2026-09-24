@@ -64,9 +64,15 @@ ln -s ~/ai-sdlc-maturity-model-skills/skills/assessing-ai-sdlc-maturity ~/.claud
 1. リポジトリの構成（言語、テストの書き方、pre-commit・タスクランナー・CI、ADR の場所、ラベル体系など）を調べ、同梱のテンプレートから、そのリポジトリ専用の証拠収集スクリプト（既定は `scripts/ai-sdlc/collect-evidence.sh`）を生成します。配置先は実行時に確認されます。生成したパスは、エージェント向けの指示書（`AGENTS.md` / `CLAUDE.md` など。無ければ README）に 1 行記録されます。
 2. スクリプトを実行して証拠の JSON を得ます。スクリプトは読み取り専用で、`.env` には触れません。既定の集計期間は 90 日です。
 3. `criteria.md` に沿って採点し、結果を出力します。
-4. 結果と JSON を GitHub の親 Issue に記録し、推奨アクションを 1 件ずつ Issue にします。
+4. 結果と JSON を GitHub の親 Issue に記録し、推奨アクションを 1 件ずつ Issue にします。書き込む前に、投稿先と内容が示されて確認を求められます。断れば、結果は Markdown で出力されるだけです。
 
 生成されたスクリプトはリポジトリにコミットしてください。次回からはそれを使うので、再評価で同じ物差しを保てます。スクリプトのヘッダーには MIT の著作権表示が入っています。コミットするときも残してください。
+
+### GitHub への書き込みと個人名について
+
+- このスキルは、対象リポジトリに **Issue を作成し、コメントを投稿します**。Issue を作れる権限で `gh auth login` している必要があります。書き込みは毎回、実行前に確認されます。
+- 証拠 JSON には、コミット著者名（`header.authors_top5`）と PR 作成者のログイン名（`l.pr_authors_window`）が含まれます。Public リポジトリでは、これらを `author-1` のような仮の名前に置き換えて収集します（証拠収集スクリプトの `--anonymize-authors`）。件数や順位はそのまま残ります。
+- 他人が管理するリポジトリで使うときは、Issue を作る前にメンテナーの了解を得てください。
 
 ## 採点の考え方
 
@@ -80,6 +86,10 @@ ln -s ~/ai-sdlc-maturity-model-skills/skills/assessing-ai-sdlc-maturity ~/.claud
 ```text
 .
 ├── .claude-plugin/            # Claude Code プラグイン / マーケットプレイスの定義
+├── .github/workflows/test.yml # CI（shellcheck と tests/ の実行）
+├── tests/
+│   ├── template_test.sh       # 証拠収集テンプレートの回帰テスト
+│   └── consistency_test.sh    # 版番号・証拠キーのファイル間の整合性チェック
 ├── skills/
 │   └── assessing-ai-sdlc-maturity/
 │       ├── SKILL.md           # スキル本体（手順）
