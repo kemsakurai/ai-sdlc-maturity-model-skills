@@ -12,8 +12,8 @@
     "repository": "owner/name",
     "head_sha": "…",
     "assessed_at": "YYYY-MM-DD",
-    "criteria_version": "0.0.2",
-    "skill_version": "0.0.2",
+    "criteria_version": "0.1.0",
+    "skill_version": "0.1.0",
     "window": {"start": "YYYY-MM-DD", "end": "YYYY-MM-DD", "days": 90},
     "authors_top5": [{"author": "…", "count": 0}],
     "single_author": false
@@ -41,7 +41,7 @@
 | --- | --- | --- |
 | `ADR_DIR` | `c.adr_*`, `p.adr_recent_count_window` | `docs/adr` |
 | `CHANGELOG_FILE` | `n.changelog_lines`, `o.changelog_measurement_lines_count` | `CHANGELOG.md` |
-| `RULE_HISTORY_FILES` | `a.rule_history_doc_present` | `docs/rule-history.md rule-history.md` |
+| `RULE_HISTORY_FILES` | `a.rule_history_doc_present` | `docs/rule-history.md rule-history.md`（仮の名前。エージェント向けルールの変更理由を残すファイルは決まった名前が無いので、スキャフォールドのときに探して設定する） |
 | `TEST_FILE_FIND_EXPR`, `TEST_CASE_REGEX` | `e.test_files_count`, `e.test_cases_count` | Python / JS / TS / Go / Java / Ruby の一般的な命名 |
 | `COVERAGE_GATE_FILES` | `e.coverage_gate_configured` | pytest / coverage / jest / vitest の設定ファイル（`ENFORCEMENT_FILES` も併せて探す） |
 | `ARCH_LINT_CONFIG_FILES`, `ARCH_LINT_ENFORCE_PATTERN` | `c.arch_lint_*` | import-linter / dependency-cruiser / ArchUnit |
@@ -104,7 +104,7 @@
 | キー | 数えるもの | 目安 |
 | --- | --- | --- |
 | `f.smoke_steps` | デプロイ系ワークフロー内の検証ステップ（smoke / health / verify / curl）に一致する行の数 | 0 なら F はレベル 3 未達 |
-| `f.rollback_doc_present` | デプロイ系ワークフローのどれか、または `ROLLBACK_DOC_FILES` に戻し手順の記載があるか | レベル 3 の候補 |
+| `f.rollback_doc_present` | デプロイ系ワークフローのどれかに rollback の記載があるか、ロールバック手順のドキュメント（`ROLLBACK_DOC_FILES`）があるか | レベル 3 の候補 |
 | `f.deploy_runs` | 窓内のデプロイ系ワークフローの実行結果（ワークフロー別 × conclusion 別の件数） | `success` が無く `skipped` / `failure` ばかりなら「存在のみ」でレベル 2 止まり |
 
 ## G. 監視・インシデント対応

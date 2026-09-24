@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# 証拠収集スクリプト（読み取り専用、criteria.md 0.0.2 準拠）
+# 証拠収集スクリプト（読み取り専用、criteria.md 0.1.0 準拠）
 # このファイルは assessing-ai-sdlc-maturity スキルによりプロジェクト固有に生成されました。
 # https://github.com/kemsakurai/ai-sdlc-maturity-model-skills
 #
@@ -12,8 +12,8 @@
 # =============================================================================
 set -u
 
-CRITERIA_VERSION="0.0.2"
-SKILL_VERSION="0.0.2"
+CRITERIA_VERSION="0.1.0"
+SKILL_VERSION="0.1.0"
 WINDOW_DAYS=90
 TARGET_PATH="."
 
@@ -33,11 +33,14 @@ done
 if [ -n "$TARGET_PATH" ] && [ "$TARGET_PATH" != "." ]; then
   cd "$TARGET_PATH" || { echo "エラー: $TARGET_PATH に移動できません" >&2; exit 1; }
 fi
-git rev-parse --is-inside-work-tree >/dev/null 2>&1 || { echo "エラー: $(pwd) は git リポジトリではない" >&2; exit 1; }
+git rev-parse --is-inside-work-tree >/dev/null 2>&1 || { echo "エラー: $(pwd) は git リポジトリではありません" >&2; exit 1; }
 
 # =============================================================================
-# [プロジェクト固有設定ブロック] - 初回プロファイリング時に自動調整されます
-# 空文字のままにした項目は、各セクションの既定値が使われます。
+# [プロジェクト固有設定ブロック]
+# 初回実行時に、エージェントが対象リポジトリを調べて {{...}} を埋めます。
+# - 空文字のままにした項目は、各セクションの既定値が使われます。
+# - '...' で囲まれた項目の値には一重引用符（'）を入れないでください。引用符が要るときは二重引用符（"）を使います。
+# - "..." で囲まれた項目の値には二重引用符（"）・$・` を入れないでください。
 # =============================================================================
 # ADR（設計決定記録）ディレクトリ
 ADR_DIR="{{ADR_DIR}}"
@@ -49,11 +52,11 @@ CHANGELOG_FILE="{{CHANGELOG_FILE}}"
 RULE_HISTORY_FILES="{{RULE_HISTORY_FILES}}"
 
 # テストファイルの探索条件（find の式）
-# 例: -name 'test_*.py' -o -name '*.test.ts' -o -name '*_test.go'
+# 例: -name "test_*.py" -o -name "*.test.ts" -o -name "*_test.go"
 TEST_FILE_FIND_EXPR='{{TEST_FILE_FIND_EXPR}}'
 
 # テストケース（関数・メソッド）のカウント用 grep 正規表現（ERE）
-# 例: 'def test_|it\(|test\('
+# 例: def test_|it\(|test\(
 TEST_CASE_REGEX='{{TEST_CASE_REGEX}}'
 
 # カバレッジの下限設定を探すファイル（空白区切り）
@@ -126,14 +129,6 @@ REPO_NWO="$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || t
 if [ -z "$REPO_NWO" ]; then
   REPO_NWO="$(git remote get-url origin 2>/dev/null | sed -E 's#\.git$##; s#.*[:/]([^/]+/[^/]+)$#\1#' || true)"
 fi
-AUTHORS_TOP5_JSON="$(git log --format='%an' | sort | uniq -c | sort -rn | head -5 | \
-  jq -R -s 'split("\n") | map(select(length>0)) | map(capture("^\\s*(?<count>[0-9]+)\\s+(?<author>.+)$")) | map({author: .author, count: (.count|tonumber)})')"
-SINGLE_AUTHOR="$(echo "$AUTHORS_TOP5_JSON" | jq 'length <= 1')"
-
-# gh の一覧取得の安全上限（値が上限に張り付いていたら、実数はもっと多い）
-GH_LIMIT=500
-GH_LABEL_LIMIT=1000
-
 # emit <key> <command> <limit-or-empty> <value-json>
 emit() {
   local key="$1" cmd="$2" limit="$3" value_json="$4"
@@ -145,6 +140,16 @@ emit() {
 json_bool() { [ "$1" = "1" ] && echo true || echo false; }
 json_int() { echo "${1:-0}" | tr -d '[:space:]' | sed 's/^$/0/'; }
 lines_to_array() { jq -R -s 'split("\n") | map(select(length>0))'; }
+
+# uniq_c_to_array <name> : `uniq -c` の出力を [{<name>: 値, count: 件数}, …] にする
+uniq_c_to_array() {
+  jq -R -s --arg name "$1" 'split("\n") | map(select(length>0)) | map(capture("^\\s*(?<count>[0-9]+)\\s+(?<v>.+)$")) | map({($name): .v, count: (.count|tonumber)})'
+}
+
+# uniq_c_to_object : `uniq -c` の出力を {値: 件数, …} にする
+uniq_c_to_object() {
+  jq -R -s 'split("\n") | map(select(length>0)) | map(capture("^\\s*(?<count>[0-9]+)\\s+(?<v>.+)$")) | map({(.v): (.count|tonumber)}) | add // {}'
+}
 
 # existing_paths <path>... : 存在するパスだけを 1 行ずつ出力する（glob は呼び出し側で展開済み）
 existing_paths() {
@@ -167,6 +172,18 @@ grep_any() {
 
 # regex_to_gh_query <a|b|c> : GitHub 検索用に `a OR b OR c` へ変換する
 regex_to_gh_query() { printf '%s' "$1" | sed 's/|/ OR /g'; }
+
+AUTHORS_TOP5_JSON="$(git log --format='%an' | sort | uniq -c | sort -rn | head -5 | uniq_c_to_array author)"
+SINGLE_AUTHOR="$(echo "$AUTHORS_TOP5_JSON" | jq 'length <= 1')"
+
+# gh の一覧取得の安全上限（値が上限に張り付いていたら、実数はもっと多い）
+GH_LIMIT=500
+GH_LABEL_LIMIT=1000
+
+# Issue に付いたラベル名の一覧（延べ。対象は最大 GH_LABEL_LIMIT 件の Issue）。H・M・P で使い回す
+ALL_ISSUE_LABELS="$(gh issue list --state all --limit "$GH_LABEL_LIMIT" --json labels -q '.[].labels[].name' 2>/dev/null || true)"
+# count_labels <ERE> : ALL_ISSUE_LABELS のうち正規表現に一致するラベルの延べ数
+count_labels() { printf '%s\n' "$ALL_ISSUE_LABELS" | grep -ciE -- "$1" || true; }
 
 ENFORCE_TARGETS="${ENFORCEMENT_FILES:-.pre-commit-config.yaml .husky lefthook.yml Taskfile.yml Makefile justfile package.json .github/workflows}"
 
@@ -212,16 +229,16 @@ emit "b.issues_closed_count" "gh issue list --state closed --limit $GH_LABEL_LIM
 # C. システム設計・アーキテクチャ
 # ---------------------------------------------------------------------------
 ADR_TARGET="${ADR_DIR:-docs/adr}"
-# 索引・テンプレートは ADR として数えない
-ADR_NON_RECORD_REGEX='^(readme|index|template)[^/]*\.md$'
+# 索引・テンプレートは ADR として数えない（ファイル名だけでもパスでも一致する）
+ADR_NON_RECORD_REGEX='(^|/)(readme|index|template)[^/]*\.md$'
 adr_files() { ls "$ADR_TARGET" 2>/dev/null | grep -E '\.md$' | grep -viE "$ADR_NON_RECORD_REGEX"; }
 
 C_ADR_COUNT="$(adr_files | wc -l | tr -d ' ')"
-emit "c.adr_count" "ls $ADR_TARGET | grep '\\.md$' (README/index/template を除く) | wc -l" "" "$(json_int "$C_ADR_COUNT")"
+emit "c.adr_count" "ls $ADR_TARGET | grep '\\.md$' (excluding README/index/template) | wc -l" "" "$(json_int "$C_ADR_COUNT")"
 
 # ファイル名の最初の数字列を ADR 番号とみなし（先頭のゼロは無視）、同じ番号が複数あるものを列挙する
 C_ADR_DUP_JSON="$(adr_files | sed -nE 's/^[^0-9]*([0-9]+).*$/\1/p' | sed -E 's/^0+([0-9])/\1/' | sort | uniq -d | lines_to_array)"
-emit "c.adr_duplicates" "ADR ファイル名の最初の数字列で重複を検出" "" "$C_ADR_DUP_JSON"
+emit "c.adr_duplicates" "detect duplicate ADR numbers (first digit run in the file name)" "" "$C_ADR_DUP_JSON"
 
 C_ARCH_CFG="0"
 for af in ${ARCH_LINT_CONFIG_FILES:-.importlinter .dependency-cruiser.* .eslintrc-boundaries.* archunit.properties}; do
@@ -244,8 +261,7 @@ emit "d.commit_count_total" "git rev-list --count HEAD" "" "$(json_int "$D_COMMI
 D_COMMITS_WINDOW="$(git log --since="$WINDOW_START" --oneline | wc -l | tr -d ' ')"
 emit "d.commits_window" "git log --since=<window-start> --oneline | wc -l" "" "$(json_int "$D_COMMITS_WINDOW")"
 
-D_BY_MONTH_JSON="$(git log --format='%ad' --date=format:'%Y-%m' | sort | uniq -c | tail -12 | \
-  jq -R -s 'split("\n") | map(select(length>0)) | map(capture("^\\s*(?<count>[0-9]+)\\s+(?<month>.+)$")) | map({(.month): (.count|tonumber)}) | add // {}')"
+D_BY_MONTH_JSON="$(git log --format='%ad' --date=format:'%Y-%m' | sort | uniq -c | tail -12 | uniq_c_to_object)"
 emit "d.commits_by_month" "git log --format='%ad' --date=format:'%Y-%m' | sort | uniq -c | tail -12" "12" "$D_BY_MONTH_JSON"
 
 # 既定ブランチの first-parent 履歴のうち、PR 由来のコミット（squash の `(#N)` / merge commit の `Merge pull request #N`）の割合
@@ -257,7 +273,7 @@ if [ "$(json_int "$D_FP_TOTAL")" -gt 0 ]; then
 else
   D_PR_RATIO="null"
 fi
-emit "d.pr_commit_ratio_window" "git log --first-parent --since=<window-start>: (#N) または Merge pull request #N の件数 / 全件数" "" "$D_PR_RATIO"
+emit "d.pr_commit_ratio_window" "git log --first-parent --since=<window-start>: subjects with (#N) or 'Merge pull request #N' / all subjects" "" "$D_PR_RATIO"
 
 # ---------------------------------------------------------------------------
 # E. テスト・QA
@@ -290,12 +306,12 @@ DEPLOY_FILES="$(ls .github/workflows 2>/dev/null | grep -iE "$DEPLOY_WF_PTN" || 
 
 F_SMOKE=0
 for df in $DEPLOY_FILES; do
-  c="$(grep -c -iE 'smoke|curl|health|verify' ".github/workflows/$df" 2>/dev/null || true)"
-  F_SMOKE=$((F_SMOKE + $(json_int "$c")))
+  smoke_hits="$(grep -c -iE 'smoke|curl|health|verify' ".github/workflows/$df" 2>/dev/null || true)"
+  F_SMOKE=$((F_SMOKE + $(json_int "$smoke_hits")))
 done
 emit "f.smoke_steps" "grep smoke/health/verify in deploy workflows" "" "$(json_int "$F_SMOKE")"
 
-# デプロイ系ワークフローのどれか 1 つ、または戻し手順のドキュメントに記載があれば true
+# デプロイ系ワークフローのどれか 1 つに記載があるか、ロールバック手順のドキュメントがあれば true
 F_ROLLBACK="0"
 for df in $DEPLOY_FILES; do
   grep -qi 'rollback' ".github/workflows/$df" 2>/dev/null && { F_ROLLBACK="1"; break; }
@@ -310,7 +326,7 @@ emit "f.rollback_doc_present" "check rollback documentation in deploy workflows 
 F_DEPLOY_RUNS_JSON="{}"
 for w in $DEPLOY_FILES; do
   CONCL_JSON="$(gh run list --workflow "$w" --created ">=$WINDOW_START" -L "$GH_LIMIT" --json conclusion -q '.[].conclusion' 2>/dev/null | \
-    sort | uniq -c | jq -R -s 'split("\n") | map(select(length>0)) | map(capture("^\\s*(?<count>[0-9]+)\\s+(?<c>.+)$")) | map({(.c): (.count|tonumber)}) | add // {}')"
+    sort | uniq -c | uniq_c_to_object)"
   F_DEPLOY_RUNS_JSON="$(jq -n --argjson base "$F_DEPLOY_RUNS_JSON" --arg w "$w" --argjson c "$CONCL_JSON" '$base + {($w): $c}')"
 done
 emit "f.deploy_runs" "gh run list for deploy workflows in window" "$GH_LIMIT" "$F_DEPLOY_RUNS_JSON"
@@ -332,7 +348,7 @@ emit "g.incident_labeled_issues_count" "gh issue list with incident/postmortem l
 # H. データ管理
 # ---------------------------------------------------------------------------
 DATA_PTN="${DATA_LABELS_REGEX:-dataset|data-pipeline|data-quality|schema|migration|etl}"
-H_DATA_LABELS="$(gh issue list --state all --limit "$GH_LABEL_LIMIT" --json labels -q '.[].labels[].name' 2>/dev/null | grep -ciE "$DATA_PTN" || true)"
+H_DATA_LABELS="$(count_labels "$DATA_PTN")"
 emit "h.data_management_labels_count" "gh issue list labels matching data management keywords" "$GH_LABEL_LIMIT" "$(json_int "$H_DATA_LABELS")"
 
 H_DATA_GATE="0"
@@ -370,9 +386,10 @@ J_DEPENDABOT="0"
 { [ -f .github/dependabot.yml ] || [ -f .github/dependabot.yaml ] || [ -f .github/renovate.json ] || [ -f renovate.json ]; } && J_DEPENDABOT="1"
 emit "j.dependabot_or_renovate_present" "check dependabot/renovate" "" "$(json_bool "$J_DEPENDABOT")"
 
-J_CODEQL="0"
-{ ls .github/workflows 2>/dev/null | grep -iE 'codeql|security|audit|snyk|trivy|semgrep' >/dev/null 2>&1; } && J_CODEQL="1"
-emit "j.codeql_security_workflow_present" "check security/codeql workflows" "" "$(json_bool "$J_CODEQL")"
+# キー名は互換のため codeql のままだが、CodeQL 以外のセキュリティ系ワークフローも対象にする
+J_SECURITY_WF="0"
+{ ls .github/workflows 2>/dev/null | grep -iE 'codeql|security|audit|snyk|trivy|semgrep' >/dev/null 2>&1; } && J_SECURITY_WF="1"
+emit "j.codeql_security_workflow_present" "check security workflows (codeql/snyk/trivy/semgrep/...)" "" "$(json_bool "$J_SECURITY_WF")"
 
 # ---------------------------------------------------------------------------
 # K. 透明性・監査証跡
@@ -382,12 +399,11 @@ emit "j.codeql_security_workflow_present" "check security/codeql workflows" "" "
 AI_CO_PTN="${AI_COAUTHOR_REGEX:-claude|anthropic|copilot|openai|codex|chatgpt|gemini|cursor|devin|aider|\[bot\]}"
 K_TRAILERS="$(git log --format='%(trailers:key=Co-authored-by,valueonly,separator=%x1f)')"
 K_COAUTHORED="$(printf '%s' "$K_TRAILERS" | grep -ciE "$AI_CO_PTN" || true)"
-emit "k.coauthored_count" "git log: AI エージェントの Co-authored-by トレーラーを持つコミット数" "" "$(json_int "$K_COAUTHORED")"
+emit "k.coauthored_count" "git log: commits with an AI agent Co-authored-by trailer" "" "$(json_int "$K_COAUTHORED")"
 
 K_BY_MODEL_JSON="$(printf '%s' "$K_TRAILERS" | tr '\037' '\n' | grep -iE "$AI_CO_PTN" | sed -E 's/[[:space:]]*<[^>]*>[[:space:]]*$//' | \
-  sort | uniq -c | sort -rn | head -10 | \
-  jq -R -s 'split("\n") | map(select(length>0)) | map(capture("^\\s*(?<count>[0-9]+)\\s+(?<model>.+)$")) | map({model: .model, count: (.count|tonumber)})')"
-emit "k.coauthored_by_model" "git log: AI エージェントの Co-authored-by の名前別件数（上位 10）" "10" "$K_BY_MODEL_JSON"
+  sort | uniq -c | sort -rn | head -10 | uniq_c_to_array model)"
+emit "k.coauthored_by_model" "git log: AI agent Co-authored-by names (top 10)" "10" "$K_BY_MODEL_JSON"
 
 if [ "${D_COMMIT_TOTAL:-0}" -gt 0 ]; then
   K_RATIO="$(jq -n --argjson a "$(json_int "$K_COAUTHORED")" --argjson b "$D_COMMIT_TOTAL" '(($a/$b)*1000|round)/1000')"
@@ -404,7 +420,7 @@ L_PR_STATS_JSON="$(gh pr list --state merged --search "merged:>=$WINDOW_START" -
 emit "l.pr_review_stats_window" "gh pr list merged review stats in window" "$GH_LIMIT" "$L_PR_STATS_JSON"
 
 L_PR_AUTHORS_JSON="$(gh pr list --state merged --search "merged:>=$WINDOW_START" --json author -L "$GH_LIMIT" -q '.[].author.login' 2>/dev/null | \
-  sort | uniq -c | jq -R -s 'split("\n") | map(select(length>0)) | map(capture("^\\s*(?<count>[0-9]+)\\s+(?<author>.+)$")) | map({author: .author, count: (.count|tonumber)})' || echo '[]')"
+  sort | uniq -c | uniq_c_to_array author || echo '[]')"
 emit "l.pr_authors_window" "gh pr list merged authors in window" "$GH_LIMIT" "$L_PR_AUTHORS_JSON"
 
 # ---------------------------------------------------------------------------
@@ -414,7 +430,7 @@ UR_PTN="${USER_RESEARCH_REGEX:-persona|ペルソナ|user-research|ux-research|us
 M_UR_ISSUES="$(gh issue list --state all --search "created:>=$WINDOW_START $(regex_to_gh_query "$UR_PTN")" -L "$GH_LIMIT" --json number -q 'length' 2>/dev/null || echo 0)"
 emit "m.user_research_issues_count" "gh issue list user research issues in window (keywords joined with OR)" "$GH_LIMIT" "$(json_int "$M_UR_ISSUES")"
 
-M_UR_LABELS="$(gh issue list --state all --limit "$GH_LABEL_LIMIT" --json labels -q '.[].labels[].name' 2>/dev/null | grep -ciE "$UR_PTN" || true)"
+M_UR_LABELS="$(count_labels "$UR_PTN")"
 emit "m.user_research_labels_count" "gh issue list labels matching user research" "$GH_LABEL_LIMIT" "$(json_int "$M_UR_LABELS")"
 
 # ---------------------------------------------------------------------------
@@ -443,20 +459,20 @@ VAL_PTN="${VALUE_METRIC_REGEX:-lead time|リードタイム|サイクルタイ�
 O_VALUE_MENTIONS="$(existing_paths $DOC_TARGETS | tr '\n' '\0' | xargs -0 grep -rnEi --include='*.md' -- "$VAL_PTN" /dev/null 2>/dev/null | wc -l | tr -d ' ')"
 emit "o.value_metric_mentions_count" "grep value metrics mentions in DOC_DIRS ($DOC_TARGETS)" "" "$(json_int "$O_VALUE_MENTIONS")"
 
-Q_PTN="${QUANTITATIVE_IMPACT_REGEX:-[0-9]+(\.[0-9]+)? ?(%|ms|sec|min|秒|分)|短縮|削減|speedup|faster|reduction}"
-O_MEASUREMENT_LINES="$(grep -cEi -- "$Q_PTN" "$CHANGELOG_TARGET" 2>/dev/null || true)"
+QUANT_PTN="${QUANTITATIVE_IMPACT_REGEX:-[0-9]+(\.[0-9]+)? ?(%|ms|sec|min|秒|分)|短縮|削減|speedup|faster|reduction}"
+O_MEASUREMENT_LINES="$(grep -cEi -- "$QUANT_PTN" "$CHANGELOG_TARGET" 2>/dev/null || true)"
 emit "o.changelog_measurement_lines_count" "grep quantitative impact in changelog" "" "$(json_int "$O_MEASUREMENT_LINES")"
 
 # ---------------------------------------------------------------------------
 # P. ビジョンと適応
 # ---------------------------------------------------------------------------
 ROADMAP_PTN="${ROADMAP_LABELS_REGEX:-roadmap|explore|探索|rfc|proposal|spike}"
-P_ROADMAP_LABELS="$(gh issue list --state all --limit "$GH_LABEL_LIMIT" --json labels -q '.[].labels[].name' 2>/dev/null | grep -ciE "$ROADMAP_PTN" || true)"
+P_ROADMAP_LABELS="$(count_labels "$ROADMAP_PTN")"
 emit "p.roadmap_label_count" "gh issue list labels matching roadmap/explore" "$GH_LABEL_LIMIT" "$(json_int "$P_ROADMAP_LABELS")"
 
 P_ADR_RECENT="$(git log --since="$WINDOW_START" --name-only --format='' -- "$ADR_TARGET" 2>/dev/null | sort -u | \
-  grep -E '\.md$' | grep -viE '(^|/)(readme|index|template)[^/]*\.md$' | wc -l | tr -d ' ')"
-emit "p.adr_recent_count_window" "git log: ADR files changed in window (README/index/template を除く)" "" "$(json_int "$P_ADR_RECENT")"
+  grep -E '\.md$' | grep -viE "$ADR_NON_RECORD_REGEX" | wc -l | tr -d ' ')"
+emit "p.adr_recent_count_window" "git log: ADR files changed in window (excluding README/index/template)" "" "$(json_int "$P_ADR_RECENT")"
 
 # ---------------------------------------------------------------------------
 # 出力

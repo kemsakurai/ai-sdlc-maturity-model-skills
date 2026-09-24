@@ -19,13 +19,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
----
-
-Third-party materials referenced or adapted in this repository are not covered
-by the license above and remain subject to their respective owners' terms:
-
-- DEFRA "AI-SDLC Maturity Assessment"
-  https://github.com/DEFRA/ai-sdlc-maturity-assessment
-- Gigacore "AI-Maturity-Model" (CC BY 4.0)
-  https://github.com/Gigacore/AI-Maturity-Model
