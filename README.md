@@ -12,13 +12,12 @@ GitHub リポジトリの git 履歴・ファイル・Issue・PR・GitHub Action
 
 - リポジトリから一次証拠（コミット、PR のレビュー状況、ワークフローの実行結果、ADR、テスト、ラベル等）を読み取り専用で集め、キー付きの JSON にまとめます。
 - その JSON を根拠に 16 項目を −1〜5 で採点し、軸ごとのスコア、全体の中央値と最小値、次のレベルへのギャップ、推奨アクションを出します。
-- 推奨アクションを、証拠キーで書いた受け入れ基準付きの Issue にします（例：`c.adr_duplicates == 0`）。四半期ごとの再評価では、前回の JSON との差分から説明します。
+- 推奨アクションを、証拠キーで書いた受け入れ基準付きの Issue にします（例：`c.adr_duplicates == []`）。四半期ごとの再評価では、前回の JSON との差分から説明します。
 
 **できないこと（必ず読んでください）**
 
-- 証拠は **GitHub 上にあるものだけ** です。口頭で合意している手順、Slack や Notion などの別ツールで回しているふりかえり、社内の監視ダッシュボードといった、GitHub で管理していないプロセスは拾えません。そのようなプロセスが多いチームでは、実態より **低く** 採点されます。
-- このため、出力は確定した評価ではなく **参考情報** として扱ってください。GitHub の外で回しているプロセスが多い場合は特にそうです。
-- 出力は **アセスメントのたたき台（ドラフト）** です。チームのメンバーと一緒に、ドラフトをもとに「この項目は実際にはこう回している」「ここは確かに弱い」と話し合う使い方をおすすめします。話し合いで分かった GitHub の外の実態は、親 Issue にコメントとして残しておくと次回の再評価で役立ちます。
+- 証拠は **GitHub 上にあるものだけ** です。口頭で合意している手順、Slack や Notion などの別ツールで回しているふりかえり、社内の監視ダッシュボードといった、GitHub で管理していないプロセスは拾えません。そのようなプロセスが多いチームでは実態より **低く** 採点されるので、結果は **参考情報** として扱ってください。
+- 出力は確定した評価ではなく、**アセスメントのたたき台（ドラフト）** です。チームのメンバーと一緒に、ドラフトをもとに「この項目は実際にはこう回している」「ここは確かに弱い」と話し合う使い方をおすすめします。話し合いで分かった GitHub の外の実態は、親 Issue にコメントとして残しておくと次回の再評価で役立ちます。
 
 ## 必要なもの
 
@@ -90,16 +89,23 @@ ln -s ~/ai-sdlc-maturity-model-skills/skills/assessing-ai-sdlc-maturity ~/.claud
 │       └── templates/
 │           └── collect-evidence.template.sh
 ├── CHANGELOG.md
-└── LICENSE
+├── LICENSE                    # MIT License
+├── README.md
+└── THIRD_PARTY_NOTICES.md     # 参照・改変した第三者資料とそのライセンス
 ```
 
 ## バージョン
 
-[Semantic Versioning](https://semver.org/lang/ja/) に従います。`criteria.md` の文言を変えると以前の採点と比較できなくなるので、判定基準を変えたときは少なくともマイナーバージョンを上げます。証拠 JSON の `header.criteria_version` と `header.skill_version` に、どの版で採点したかが残ります。変更履歴は [`CHANGELOG.md`](CHANGELOG.md) を参照してください。
+[Semantic Versioning](https://semver.org/lang/ja/) に従います。スキル本体と判定基準シートは 1 つの版番号を共有し、証拠 JSON の `header.skill_version` と `header.criteria_version` には常に同じ値が入ります。
+
+- **patch**（例：0.1.0 → 0.1.1）：判定基準の文言は変えません。証拠の収集方法の修正や文書の手直しです。patch だけが違う版どうしの採点は比較できます。
+- **minor 以上**（例：0.1.x → 0.2.0）：判定基準の文言や項目を変えます。以前の採点とは、そのままでは比較できません。
+
+変更履歴は [`CHANGELOG.md`](CHANGELOG.md) を参照してください。
 
 ## 出典とライセンス
 
-このリポジトリのコードと文書は [MIT License](LICENSE) で公開しています。ただし、以下の第三者の資料はそれぞれの権利者とライセンスに従います。
+このリポジトリのコードと文書は [MIT License](LICENSE) で公開しています。ただし、以下の第三者の資料はそれぞれの権利者とライセンスに従います。詳しくは [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) を参照してください。
 
 - **DEFRA「AI-SDLC Maturity Assessment」**（<https://github.com/DEFRA/ai-sdlc-maturity-assessment>）：7 段階の尺度、次元の名前、階層準拠の採点法を参照しています。項目別の判定基準は、各次元ページにある Sample assessment questions の観点を参考にし、文言は独自に書き起こしたものです。DEFRA の文章は収録していないので、原文はリンク先を参照してください。
 - **Gigacore「AI-Maturity-Model」**（<https://github.com/Gigacore/AI-Maturity-Model>、[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)）：6 つの軸とレベル名を、日本語化して項目に対応づけるという改変を加えて使っています。
