@@ -160,7 +160,7 @@ OUT="$WORK/gh-noremote.json"
 FAKE_GH_MODE=noremote bash "$WORK/default.sh" "$REPO" > "$OUT" 2> "$WORK/gh-noremote.err"
 check "gh 使えない: gh_available が false"              "$OUT" '.header.gh_available == false'
 check "gh 使えない: collection_errors が GitHub の 11 キー" "$OUT" "(.header.collection_errors | sort) == $GH_KEYS"
-check "gh 使えない: 値は 0 ではなく null"               "$OUT" "[.evidence[$GH_KEYS[]].value] | all(. == null)"
+check "gh 使えない: 値は 0 ではなく null"               "$OUT" "[.evidence[${GH_KEYS}[]].value] | all(. == null)"
 check "gh 使えない: error に理由が入る"                  "$OUT" '.evidence["b.issues_open_count"].error | test("no git remotes")'
 check "gh 使えない: GitHub 以外のキーは取得できている"    "$OUT" '[.evidence | to_entries[] | select(.value.error == null)] | length == 33'
 if [ "$(cat "$FAKE_GH_COUNTER")" = "1" ]; then pass "gh 使えない: 最初の確認の 1 回しか gh を呼ばない"; else fail "gh 使えない: 最初の確認の 1 回しか gh を呼ばない（$(cat "$FAKE_GH_COUNTER") 回）"; fi
