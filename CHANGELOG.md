@@ -2,6 +2,28 @@
 
 このプロジェクトは [Semantic Versioning](https://semver.org/lang/ja/) に従います。スキル本体と判定基準シートは 1 つの版番号を共有します。`criteria.md` の判定基準を変えたときは、以前の採点と比較できなくなるので、少なくともマイナーバージョンを上げます。patch だけが違う版どうしの採点は比較できます。
 
+## [0.1.2] - 2026-09-24
+
+判定基準（`criteria.md` の文言）は 0.1.1 と同じです。`gh` がすべて成功したときの証拠の値も 0.1.1 と同じです（実在するリポジトリで 44 キーすべての一致を確認）。
+
+### 修正
+
+- `gh` が失敗したとき、エラーにならずに `0` や `{}` を書き込んでいた問題を直した。一時的な失敗でも「実態が 0」と区別できなかった。
+  - 一時的な失敗（ネットワーク、API の 5xx、レート制限など）は、間隔を空けて `GH_RETRY_MAX` 回（既定 3）まで試す。間隔は `GH_RETRY_SLEEP`（既定 3 秒）× 試行回数。
+  - 未認証・リモートが無い・HTTP 401/404 のように、再試行しても直らない失敗は再試行しない。
+  - それでも取得できなかったキーは `value: null` とし、`error` に理由を残す。
+  - 実行の最初に `gh` を使えるかを確かめ、使えなければ GitHub 由来のキーを再試行せずにすべて `null` で記録する。
+
+### 追加
+
+- 出力 JSON のヘッダーに `gh_available`（`gh` を使えたか）と `collection_errors`（取得できなかったキーの一覧）を加えた。取得できなかったキーがあると、標準エラーに警告を出す。
+- `SKILL.md`：`value` が `null` のキーを 0 として採点せず、再実行しても取れなければ「未取得」と明記するルールを加えた。
+- テストに偽の `gh` を使うケースを加えた（リモートが無い・一時的な失敗・継続的な失敗・再試行しても直らない失敗）。本物の `gh` やネットワークには触れない。
+
+### 変更
+
+- `l.pr_review_stats_window` と `l.pr_authors_window` のための PR 一覧の取得を、2 回から 1 回にまとめた。
+
 ## [0.1.1] - 2026-09-24
 
 判定基準（`criteria.md` の項目・レベルの文言）は 0.1.0 と同じです。`--anonymize-authors` を付けずに実行したときの証拠の値も 0.1.0 と同じです。ただし `l.pr_authors_window` は、件数の多い順に並ぶようになりました。
@@ -97,6 +119,7 @@
   - 証拠キーの辞書 `references/evidence-keys.md`
 - Claude Code のプラグイン / マーケットプレイスの定義
 
+[0.1.2]: https://github.com/kemsakurai/ai-sdlc-maturity-model-skills/releases/tag/v0.1.2
 [0.1.1]: https://github.com/kemsakurai/ai-sdlc-maturity-model-skills/releases/tag/v0.1.1
 [0.1.0]: https://github.com/kemsakurai/ai-sdlc-maturity-model-skills/releases/tag/v0.1.0
 [0.0.2]: https://github.com/kemsakurai/ai-sdlc-maturity-model-skills/releases/tag/v0.0.2

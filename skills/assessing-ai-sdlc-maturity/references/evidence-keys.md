@@ -12,12 +12,14 @@
     "repository": "owner/name",
     "head_sha": "…",
     "assessed_at": "YYYY-MM-DD",
-    "criteria_version": "0.1.1",
-    "skill_version": "0.1.1",
+    "criteria_version": "0.1.2",
+    "skill_version": "0.1.2",
     "window": {"start": "YYYY-MM-DD", "end": "YYYY-MM-DD", "days": 90},
     "authors_top5": [{"author": "…", "count": 0}],
     "single_author": false,
-    "authors_anonymized": false
+    "authors_anonymized": false,
+    "gh_available": true,
+    "collection_errors": []
   },
   "evidence": {
     "<key>": {"value": "…", "command": "…", "limit": null, "collected_at": "…"}
@@ -30,6 +32,20 @@
 - `limit`：`gh` の取得件数の上限。値がこの上限に張り付いているときは、実数がもっと多い可能性がある
 - `single_author`：コミット著者が 1 名なら `true`。`criteria.md` の N/A 注記を当てるかどうかの判断に使う
 - `authors_anonymized`：`--anonymize-authors` を付けて実行したなら `true`。このとき `header.authors_top5` と `l.pr_authors_window` の名前は `author-1`・`pr-author-1` のような仮の名前になる（bot は除く）。件数や順位は変わらない
+- `gh_available`：実行の最初の確認で `gh` を使えたなら `true`。`false` のときは、GitHub から取るキーがすべて取得できていない
+- `collection_errors`：取得できなかったキーの一覧。空でなければ、該当するキーを採点に使う前に再実行する
+
+## 取得できなかったキー
+
+GitHub から取るキー（`b.issues_*`、`f.deploy_runs`、`g.incident_labeled_issues_count`、`h.data_management_labels_count`、`l.*`、`m.*`、`n.retro_prs_window_count`、`p.roadmap_label_count`）は、`gh` が失敗すると取得できない。スクリプトは一時的な失敗（ネットワーク、API の 5xx、レート制限など）に備えて `GH_RETRY_MAX` 回（既定 3）まで試す。未認証・リモートが無い・HTTP 401/404 のように再試行しても直らない失敗は、すぐにあきらめる。
+
+それでも取得できなかったキーは次の形で記録する。値を `0` や `{}` にすると「実態が 0」と読み違えるので、`null` にする。
+
+```json
+"b.issues_open_count": {"value": null, "error": "HTTP 502: Bad Gateway", "command": "…", "limit": 500, "collected_at": "…"}
+```
+
+採点では、`value` が `null` のキーを 0 として扱わない。再実行しても取得できなければ「未取得」と明記し、そのキーに頼らずに判定するか、判定を保留する。
 
 ## 個人名が含まれるキー
 

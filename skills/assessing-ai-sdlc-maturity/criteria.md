@@ -1,4 +1,4 @@
-# 判定基準シート 0.1.1
+# 判定基準シート 0.1.2
 
 正本。版はスキル全体で 1 つの SemVer を使う。項目の追加や判定基準の文言を変えたら minor 以上を上げ、リポジトリの CHANGELOG（https://github.com/kemsakurai/ai-sdlc-maturity-model-skills/blob/main/CHANGELOG.md）に理由を残す。再評価は前回と major・minor が同じ版で行う。patch だけが違う版どうしは判定基準が同じなので比較できるが、major・minor が違うと比較できない。
 

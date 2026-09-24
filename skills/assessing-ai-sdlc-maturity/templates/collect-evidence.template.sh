@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# 証拠収集スクリプト（読み取り専用、criteria.md 0.1.1 準拠）
+# 証拠収集スクリプト（読み取り専用、criteria.md 0.1.2 準拠）
 # このファイルは assessing-ai-sdlc-maturity スキルによりプロジェクト固有に生成されました。
 # https://github.com/kemsakurai/ai-sdlc-maturity-model-skills
 #
@@ -11,11 +11,15 @@
 #   --anonymize-authors  コミット著者名と PR 作成者のログイン名を author-1, author-2, … に置き換える。
 #                        証拠 JSON を公開の Issue などに投稿するときに使う。
 # 必要なコマンド: git (2.22 以上), gh (認証済み), jq
+# 環境変数: GH_RETRY_MAX（gh の最大試行回数、既定 3）、GH_RETRY_SLEEP（再試行の基本間隔の秒数、既定 3）
+#
+# gh で取得できなかったキーは、値を null にして error に理由を残す（0 とは書かない）。
+# 取得できなかったキーの一覧は header.collection_errors に入る。
 # =============================================================================
 set -u
 
-CRITERIA_VERSION="0.1.1"
-SKILL_VERSION="0.1.1"
+CRITERIA_VERSION="0.1.2"
+SKILL_VERSION="0.1.2"
 WINDOW_DAYS=90
 TARGET_PATH="."
 ANONYMIZE_AUTHORS=0
@@ -114,7 +118,8 @@ AI_COAUTHOR_REGEX='{{AI_COAUTHOR_REGEX}}'
 # =============================================================================
 
 TMP_JSONL="$(mktemp)"
-trap 'rm -f "$TMP_JSONL"' EXIT
+GH_ERR_FILE="$(mktemp)"
+trap 'rm -f "$TMP_JSONL" "$GH_ERR_FILE"' EXIT
 
 RUN_TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 ASSESSED_DATE="$(date -u +%Y-%m-%d)"
@@ -132,10 +137,7 @@ WINDOW_START="$(compute_window_start "$ASSESSED_DATE" "$WINDOW_DAYS")"
 WINDOW_END="$ASSESSED_DATE"
 
 HEAD_SHA="$(git rev-parse HEAD)"
-REPO_NWO="$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || true)"
-if [ -z "$REPO_NWO" ]; then
-  REPO_NWO="$(git remote get-url origin 2>/dev/null | sed -E 's#\.git$##; s#.*[:/]([^/]+/[^/]+)$#\1#' || true)"
-fi
+
 # emit <key> <command> <limit-or-empty> <value-json>
 emit() {
   local key="$1" cmd="$2" limit="$3" value_json="$4"
@@ -143,6 +145,78 @@ emit() {
     '{($k): {value: $v, command: $cmd, limit: (if $limit == "" then null else ($limit | tonumber? // $limit) end), collected_at: $ts}}' \
     >> "$TMP_JSONL"
 }
+
+# ---------------------------------------------------------------------------
+# gh の呼び出し
+# gh は一時的に失敗することがある（ネットワーク、API の 5xx、レート制限など）。
+# 失敗を 0 や空として記録すると「実態が 0」と読み違えるので、再試行したうえで、それでも失敗したキーは
+# value: null、error: 理由 として記録する。
+# ---------------------------------------------------------------------------
+GH_RETRY_MAX="${GH_RETRY_MAX:-3}"
+GH_RETRY_SLEEP="${GH_RETRY_SLEEP:-3}"
+# 再試行しても直らない失敗（未認証、リモートが無い、リポジトリが無い等）を見分ける正規表現
+GH_PERMANENT_ERROR_REGEX='auth login|not logged|authentication|no git remotes|none of the git remotes|could not resolve to a repository|not a git repository|HTTP 401|HTTP 404'
+
+# gh_retry <gh の引数...> : gh を最大 GH_RETRY_MAX 回実行する。成功したら標準出力を出して 0 を返す。
+# 失敗したら最後のエラーを GH_ERR_FILE に残して 1 を返す（$(...) の中で呼ばれても読めるようにファイルに書く）。
+gh_retry() {
+  local attempt=1 out
+  while :; do
+    if out="$(gh "$@" 2>"$GH_ERR_FILE")"; then
+      printf '%s\n' "$out"
+      return 0
+    fi
+    [ "$attempt" -ge "$GH_RETRY_MAX" ] && return 1
+    grep -qiE "$GH_PERMANENT_ERROR_REGEX" "$GH_ERR_FILE" && return 1
+    sleep $(( GH_RETRY_SLEEP * attempt ))
+    attempt=$(( attempt + 1 ))
+  done
+}
+
+# gh_last_error : 直前に失敗した gh のエラーメッセージ（1 行・最大 300 文字）
+gh_last_error() { tr '\n' ' ' < "$GH_ERR_FILE" | sed -E 's/ +/ /g; s/ $//' | cut -c1-300; }
+
+# gh_failure_reason : gh で取得できなかった理由（gh そのものが使えないのか、直前の呼び出しが失敗したのか）
+gh_failure_reason() {
+  if [ "$GH_AVAILABLE" = "1" ]; then gh_last_error; else printf 'gh unavailable: %s' "$GH_UNAVAILABLE_REASON"; fi
+}
+
+# emit_gh_failure <key> <command> <limit-or-empty> [reason] : 取得できなかったキーを value: null で記録する
+emit_gh_failure() {
+  local key="$1" cmd="$2" limit="$3" reason="${4:-}"
+  [ -n "$reason" ] || reason="$(gh_failure_reason)"
+  jq -n --arg k "$key" --arg cmd "$cmd" --arg limit "$limit" --arg ts "$RUN_TS" --arg err "$reason" \
+    '{($k): {value: null, error: $err, command: $cmd, limit: (if $limit == "" then null else ($limit | tonumber? // $limit) end), collected_at: $ts}}' \
+    >> "$TMP_JSONL"
+}
+
+# gh_int_key <key> <command> <limit-or-empty> <gh の引数...> : gh が出力した整数をキーの値にする。取得できなければ null で記録する
+gh_int_key() {
+  local key="$1" cmd="$2" limit="$3" out
+  shift 3
+  if [ "$GH_AVAILABLE" = "1" ] && out="$(gh_retry "$@")"; then
+    emit "$key" "$cmd" "$limit" "$(json_int "$out")"
+  else
+    emit_gh_failure "$key" "$cmd" "$limit"
+  fi
+}
+
+# 最初に gh を使えるか（インストール済み・認証済みで、対象が GitHub のリポジトリか）を確かめる。
+# 使えないときは、GitHub 由来のキーを再試行せずにすべて「取得できなかった」と記録する。
+GH_AVAILABLE=0
+GH_UNAVAILABLE_REASON=""
+REPO_NWO=""
+if ! command -v gh >/dev/null 2>&1; then
+  GH_UNAVAILABLE_REASON="gh command not found"
+elif REPO_NWO="$(gh_retry repo view --json nameWithOwner -q .nameWithOwner)"; then
+  GH_AVAILABLE=1
+else
+  REPO_NWO=""
+  GH_UNAVAILABLE_REASON="$(gh_last_error)"
+fi
+if [ -z "$REPO_NWO" ]; then
+  REPO_NWO="$(git remote get-url origin 2>/dev/null | sed -E 's#\.git$##; s#.*[:/]([^/]+/[^/]+)$#\1#' || true)"
+fi
 
 json_bool() { [ "$1" = "1" ] && echo true || echo false; }
 json_int() { echo "${1:-0}" | tr -d '[:space:]' | sed 's/^$/0/'; }
@@ -205,9 +279,25 @@ GH_LIMIT=500
 GH_LABEL_LIMIT=1000
 
 # Issue に付いたラベル名の一覧（延べ。対象は最大 GH_LABEL_LIMIT 件の Issue）。H・M・P で使い回す
-ALL_ISSUE_LABELS="$(gh issue list --state all --limit "$GH_LABEL_LIMIT" --json labels -q '.[].labels[].name' 2>/dev/null || true)"
+LABELS_OK=0
+LABELS_FAILURE_REASON=""
+if [ "$GH_AVAILABLE" = "1" ] && ALL_ISSUE_LABELS="$(gh_retry issue list --state all --limit "$GH_LABEL_LIMIT" --json labels -q '.[].labels[].name')"; then
+  LABELS_OK=1
+else
+  ALL_ISSUE_LABELS=""
+  LABELS_FAILURE_REASON="$(gh_failure_reason)"
+fi
 # count_labels <ERE> : ALL_ISSUE_LABELS のうち正規表現に一致するラベルの延べ数
 count_labels() { printf '%s\n' "$ALL_ISSUE_LABELS" | grep -ciE -- "$1" || true; }
+
+# label_key <key> <command> <ERE> : ラベルの延べ数をキーの値にする。ラベル一覧を取得できなかったら null で記録する
+label_key() {
+  if [ "$LABELS_OK" = "1" ]; then
+    emit "$1" "$2" "$GH_LABEL_LIMIT" "$(json_int "$(count_labels "$3")")"
+  else
+    emit_gh_failure "$1" "$2" "$GH_LABEL_LIMIT" "$LABELS_FAILURE_REASON"
+  fi
+}
 
 ENFORCE_TARGETS="${ENFORCEMENT_FILES:-.pre-commit-config.yaml .husky lefthook.yml Taskfile.yml Makefile justfile package.json .github/workflows}"
 
@@ -243,11 +333,11 @@ emit "b.issue_template_exists" "check issue templates" "" "$(json_bool "$B_ISSUE
 B_PR_TMPL="0"; { [ -f .github/pull_request_template.md ] || [ -f .github/PULL_REQUEST_TEMPLATE.md ] || [ -d .github/PULL_REQUEST_TEMPLATE ]; } && B_PR_TMPL="1"
 emit "b.pr_template_exists" "check pr templates" "" "$(json_bool "$B_PR_TMPL")"
 
-B_OPEN="$(gh issue list --state open --limit "$GH_LIMIT" --json number -q 'length' 2>/dev/null || echo 0)"
-emit "b.issues_open_count" "gh issue list --state open --limit $GH_LIMIT --json number -q 'length'" "$GH_LIMIT" "$(json_int "$B_OPEN")"
+gh_int_key "b.issues_open_count" "gh issue list --state open --limit $GH_LIMIT --json number -q 'length'" "$GH_LIMIT" \
+  issue list --state open --limit "$GH_LIMIT" --json number -q 'length'
 
-B_CLOSED="$(gh issue list --state closed --limit "$GH_LABEL_LIMIT" --json number -q 'length' 2>/dev/null || echo 0)"
-emit "b.issues_closed_count" "gh issue list --state closed --limit $GH_LABEL_LIMIT --json number -q 'length'" "$GH_LABEL_LIMIT" "$(json_int "$B_CLOSED")"
+gh_int_key "b.issues_closed_count" "gh issue list --state closed --limit $GH_LABEL_LIMIT --json number -q 'length'" "$GH_LABEL_LIMIT" \
+  issue list --state closed --limit "$GH_LABEL_LIMIT" --json number -q 'length'
 
 # ---------------------------------------------------------------------------
 # C. システム設計・アーキテクチャ
@@ -347,13 +437,26 @@ if [ "$F_ROLLBACK" = "0" ]; then
 fi
 emit "f.rollback_doc_present" "check rollback documentation in deploy workflows and docs" "" "$(json_bool "$F_ROLLBACK")"
 
+# デプロイ系ワークフローが 1 件も無ければ gh を呼ばずに {} とする。1 件でも取得できなければキー全体を null で記録する
 F_DEPLOY_RUNS_JSON="{}"
+F_DEPLOY_RUNS_FAILURE=""
 for w in $DEPLOY_FILES; do
-  CONCL_JSON="$(gh run list --workflow "$w" --created ">=$WINDOW_START" -L "$GH_LIMIT" --json conclusion -q '.[].conclusion' 2>/dev/null | \
-    sort | uniq -c | uniq_c_to_object)"
+  if [ "$GH_AVAILABLE" != "1" ]; then
+    F_DEPLOY_RUNS_FAILURE="$(gh_failure_reason)"
+    break
+  fi
+  if ! CONCLUSIONS="$(gh_retry run list --workflow "$w" --created ">=$WINDOW_START" -L "$GH_LIMIT" --json conclusion -q '.[].conclusion')"; then
+    F_DEPLOY_RUNS_FAILURE="$w: $(gh_last_error)"
+    break
+  fi
+  CONCL_JSON="$(printf '%s\n' "$CONCLUSIONS" | grep -v '^$' | sort | uniq -c | uniq_c_to_object)"
   F_DEPLOY_RUNS_JSON="$(jq -n --argjson base "$F_DEPLOY_RUNS_JSON" --arg w "$w" --argjson c "$CONCL_JSON" '$base + {($w): $c}')"
 done
-emit "f.deploy_runs" "gh run list for deploy workflows in window" "$GH_LIMIT" "$F_DEPLOY_RUNS_JSON"
+if [ -z "$F_DEPLOY_RUNS_FAILURE" ]; then
+  emit "f.deploy_runs" "gh run list for deploy workflows in window" "$GH_LIMIT" "$F_DEPLOY_RUNS_JSON"
+else
+  emit_gh_failure "f.deploy_runs" "gh run list for deploy workflows in window" "$GH_LIMIT" "$F_DEPLOY_RUNS_FAILURE"
+fi
 
 # ---------------------------------------------------------------------------
 # G. 監視・インシデント対応
@@ -364,16 +467,15 @@ MON_PTN="${MONITORING_PATTERNS:-sentry|uptime|healthcheck|health-check|datadog|n
 grep_any -i "$MON_PTN" ${MONITORING_DIRS:-.github/workflows terraform infra deploy k8s helm scripts} && G_MONITORING="1"
 emit "g.monitoring_configured" "check monitoring configuration" "" "$(json_bool "$G_MONITORING")"
 
-G_INCIDENT_COUNT="$(gh issue list --state all --search "created:>=$WINDOW_START" -L "$GH_LIMIT" --json labels -q \
-  '[.[] | select([.labels[].name] | any(test("incident|postmortem";"i")))] | length' 2>/dev/null || echo 0)"
-emit "g.incident_labeled_issues_count" "gh issue list with incident/postmortem labels in window" "$GH_LIMIT" "$(json_int "$G_INCIDENT_COUNT")"
+gh_int_key "g.incident_labeled_issues_count" "gh issue list with incident/postmortem labels in window" "$GH_LIMIT" \
+  issue list --state all --search "created:>=$WINDOW_START" -L "$GH_LIMIT" --json labels -q \
+  '[.[] | select([.labels[].name] | any(test("incident|postmortem";"i")))] | length'
 
 # ---------------------------------------------------------------------------
 # H. データ管理
 # ---------------------------------------------------------------------------
 DATA_PTN="${DATA_LABELS_REGEX:-dataset|data-pipeline|data-quality|schema|migration|etl}"
-H_DATA_LABELS="$(count_labels "$DATA_PTN")"
-emit "h.data_management_labels_count" "gh issue list labels matching data management keywords" "$GH_LABEL_LIMIT" "$(json_int "$H_DATA_LABELS")"
+label_key "h.data_management_labels_count" "gh issue list labels matching data management keywords" "$DATA_PTN"
 
 H_DATA_GATE="0"
 # shellcheck disable=SC2086
@@ -439,23 +541,29 @@ emit "k.coauthored_ratio_lower_bound" "coauthored_count / commit_count_total" ""
 # ---------------------------------------------------------------------------
 # L. 人間–AI・AI–AI の協働プロトコル
 # ---------------------------------------------------------------------------
-L_PR_STATS_JSON="$(gh pr list --state merged --search "merged:>=$WINDOW_START" --json mergedAt,reviews,comments,additions -L "$GH_LIMIT" -q \
-  '{count: length, with_review: ([.[] | select(.reviews|length>0)]|length), with_comments: ([.[] | select(.comments|length>0)]|length), avg_additions: (if length>0 then (([.[].additions]|add)/length|floor) else 0 end)}' 2>/dev/null || echo '{}')"
-emit "l.pr_review_stats_window" "gh pr list merged review stats in window" "$GH_LIMIT" "$L_PR_STATS_JSON"
-
-L_PR_AUTHORS_JSON="$(gh pr list --state merged --search "merged:>=$WINDOW_START" --json author -L "$GH_LIMIT" -q '.[].author.login' 2>/dev/null | \
-  sort | uniq -c | sort -rn | uniq_c_to_array author | anonymize_authors pr-author || echo '[]')"
-emit "l.pr_authors_window" "gh pr list merged authors in window" "$GH_LIMIT" "$L_PR_AUTHORS_JSON"
+# 窓内にマージされた PR の一覧を 1 回だけ取得し、レビュー状況と作成者の両方に使う
+if [ "$GH_AVAILABLE" = "1" ] && L_MERGED_PRS="$(gh_retry pr list --state merged --search "merged:>=$WINDOW_START" \
+    --json reviews,comments,additions,author -L "$GH_LIMIT")"; then
+  L_PR_STATS_JSON="$(printf '%s' "$L_MERGED_PRS" | jq -c \
+    '{count: length, with_review: ([.[] | select(.reviews|length>0)]|length), with_comments: ([.[] | select(.comments|length>0)]|length), avg_additions: (if length>0 then (([.[].additions]|add)/length|floor) else 0 end)}')"
+  L_PR_AUTHORS_JSON="$(printf '%s' "$L_MERGED_PRS" | jq -r '.[].author.login' | \
+    sort | uniq -c | sort -rn | uniq_c_to_array author | anonymize_authors pr-author)"
+  emit "l.pr_review_stats_window" "gh pr list merged review stats in window" "$GH_LIMIT" "$L_PR_STATS_JSON"
+  emit "l.pr_authors_window" "gh pr list merged authors in window" "$GH_LIMIT" "$L_PR_AUTHORS_JSON"
+else
+  L_FAILURE_REASON="$(gh_failure_reason)"
+  emit_gh_failure "l.pr_review_stats_window" "gh pr list merged review stats in window" "$GH_LIMIT" "$L_FAILURE_REASON"
+  emit_gh_failure "l.pr_authors_window" "gh pr list merged authors in window" "$GH_LIMIT" "$L_FAILURE_REASON"
+fi
 
 # ---------------------------------------------------------------------------
 # M. 合成ユーザーリサーチ
 # ---------------------------------------------------------------------------
 UR_PTN="${USER_RESEARCH_REGEX:-persona|ペルソナ|user-research|ux-research|user-interview|usability}"
-M_UR_ISSUES="$(gh issue list --state all --search "created:>=$WINDOW_START $(regex_to_gh_query "$UR_PTN")" -L "$GH_LIMIT" --json number -q 'length' 2>/dev/null || echo 0)"
-emit "m.user_research_issues_count" "gh issue list user research issues in window (keywords joined with OR)" "$GH_LIMIT" "$(json_int "$M_UR_ISSUES")"
+gh_int_key "m.user_research_issues_count" "gh issue list user research issues in window (keywords joined with OR)" "$GH_LIMIT" \
+  issue list --state all --search "created:>=$WINDOW_START $(regex_to_gh_query "$UR_PTN")" -L "$GH_LIMIT" --json number -q 'length'
 
-M_UR_LABELS="$(count_labels "$UR_PTN")"
-emit "m.user_research_labels_count" "gh issue list labels matching user research" "$GH_LABEL_LIMIT" "$(json_int "$M_UR_LABELS")"
+label_key "m.user_research_labels_count" "gh issue list labels matching user research" "$UR_PTN"
 
 # ---------------------------------------------------------------------------
 # N. 継続的改善のフィードバックループ
@@ -472,8 +580,8 @@ N_CHANGELOG_LINES="0"
 emit "n.changelog_lines" "wc -l $CHANGELOG_TARGET" "" "$(json_int "$N_CHANGELOG_LINES")"
 
 RETRO_PR_SEARCH_PTN="${RETRO_PR_SEARCH:-retro OR retrospective OR postmortem OR ふりかえり OR 振り返り in:title}"
-N_RETRO_PRS="$(gh pr list --state merged --search "merged:>=$WINDOW_START $RETRO_PR_SEARCH_PTN" -L "$GH_LIMIT" --json number -q 'length' 2>/dev/null || echo 0)"
-emit "n.retro_prs_window_count" "gh pr list retro PRs in window" "$GH_LIMIT" "$(json_int "$N_RETRO_PRS")"
+gh_int_key "n.retro_prs_window_count" "gh pr list retro PRs in window" "$GH_LIMIT" \
+  pr list --state merged --search "merged:>=$WINDOW_START $RETRO_PR_SEARCH_PTN" -L "$GH_LIMIT" --json number -q 'length'
 
 # ---------------------------------------------------------------------------
 # O. 価値計測
@@ -491,8 +599,7 @@ emit "o.changelog_measurement_lines_count" "grep quantitative impact in changelo
 # P. ビジョンと適応
 # ---------------------------------------------------------------------------
 ROADMAP_PTN="${ROADMAP_LABELS_REGEX:-roadmap|explore|探索|rfc|proposal|spike}"
-P_ROADMAP_LABELS="$(count_labels "$ROADMAP_PTN")"
-emit "p.roadmap_label_count" "gh issue list labels matching roadmap/explore" "$GH_LABEL_LIMIT" "$(json_int "$P_ROADMAP_LABELS")"
+label_key "p.roadmap_label_count" "gh issue list labels matching roadmap/explore" "$ROADMAP_PTN"
 
 P_ADR_RECENT="$(git log --since="$WINDOW_START" --name-only --format='' -- "$ADR_TARGET" 2>/dev/null | sort -u | \
   grep -E '\.md$' | grep -viE "$ADR_NON_RECORD_REGEX" | wc -l | tr -d ' ')"
@@ -515,6 +622,7 @@ jq -n \
   --argjson authors_top5 "$AUTHORS_TOP5_JSON" \
   --argjson single_author "$SINGLE_AUTHOR" \
   --argjson authors_anonymized "$(json_bool "$ANONYMIZE_AUTHORS")" \
+  --argjson gh_available "$(json_bool "$GH_AVAILABLE")" \
   --argjson evidence "$EVIDENCE_JSON" \
   '{
     header: {
@@ -526,7 +634,18 @@ jq -n \
       window: {start: $window_start, end: $window_end, days: $window_days},
       authors_top5: $authors_top5,
       single_author: $single_author,
-      authors_anonymized: $authors_anonymized
+      authors_anonymized: $authors_anonymized,
+      gh_available: $gh_available,
+      collection_errors: [$evidence | to_entries[] | select(.value.error != null) | .key]
     },
     evidence: $evidence
   }'
+
+# 取得できなかったキーがあれば、標準エラーに一覧を出す（出力 JSON は壊さない）
+COLLECTION_ERRORS="$(printf '%s' "$EVIDENCE_JSON" | jq -r 'to_entries[] | select(.value.error != null) | "\(.key): \(.value.error)"')"
+if [ -n "$COLLECTION_ERRORS" ]; then
+  {
+    echo "警告: 次のキーは GitHub から取得できなかったため null にしました。採点では 0 ではなく「未取得」として扱ってください。"
+    printf '%s\n' "$COLLECTION_ERRORS" | sed 's/^/  - /'
+  } >&2
+fi
