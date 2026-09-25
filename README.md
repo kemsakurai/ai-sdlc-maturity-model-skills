@@ -53,6 +53,17 @@ ln -s ~/ai-sdlc-maturity-model-skills/skills/assessing-ai-sdlc-maturity ~/.claud
 
 プラグインとして入れた場合、呼び出し名は `/ai-sdlc-maturity:assessing-ai-sdlc-maturity` になります。
 
+### インストールせずに使う
+
+クラウドのセッションなどで、利用者のホームディレクトリ（`~/.claude/skills`）に書けないときは、インストールせずに使えます。このリポジトリを作業用のディレクトリに clone し、エージェントに `skills/assessing-ai-sdlc-maturity/SKILL.md` を読ませて、その手順どおりに評価するよう頼みます。`criteria.md`・`references/`・`templates/` は `SKILL.md` からの相対パスで参照されるので、ディレクトリの構成は変えないでください。
+
+```sh
+git clone https://github.com/kemsakurai/ai-sdlc-maturity-model-skills.git /tmp/ai-sdlc-maturity-model-skills
+# エージェントへの依頼の例：
+#   /tmp/ai-sdlc-maturity-model-skills/skills/assessing-ai-sdlc-maturity/SKILL.md を読み、
+#   その手順で path/to/repo を評価して。書き込みなしで。
+```
+
 ## 使い方
 
 対象リポジトリのディレクトリで Claude Code を起動して、次のように呼び出します。モデルが自動で起動することはなく、明示的に呼び出したときだけ動きます。
@@ -61,6 +72,8 @@ ln -s ~/ai-sdlc-maturity-model-skills/skills/assessing-ai-sdlc-maturity ~/.claud
 /assessing-ai-sdlc-maturity                 # カレントのリポジトリを初回評価する
 /assessing-ai-sdlc-maturity path/to/repo    # パスを指定する
 /assessing-ai-sdlc-maturity 再評価 #123      # 親 Issue #123 のベースラインと比べて再評価する
+/assessing-ai-sdlc-maturity 再評価 ./assessment-2026-09-25.json  # ファイルに保存したベースラインと比べる
+/assessing-ai-sdlc-maturity 書き込みなし     # 対象リポジトリにも GitHub にも書き込まずに評価する
 ```
 
 初回の流れは次のとおりです。
@@ -68,9 +81,13 @@ ln -s ~/ai-sdlc-maturity-model-skills/skills/assessing-ai-sdlc-maturity ~/.claud
 1. リポジトリの構成（言語、テストの書き方、pre-commit・タスクランナー・CI、ADR の場所、ラベル体系など）を調べ、同梱のテンプレートから、そのリポジトリ専用の証拠収集スクリプト（既定は `scripts/ai-sdlc/collect-evidence.sh`）を生成します。配置先は実行時に確認されます。生成したパスは、エージェント向けの指示書（`AGENTS.md` / `CLAUDE.md` など。無ければ README）に 1 行記録されます。
 2. スクリプトを実行して証拠の JSON を得ます。スクリプトは読み取り専用で、`.env` には触れません。既定の集計期間は 90 日です。
 3. `criteria.md` に沿って採点し、結果を出力します。
-4. 結果と JSON を GitHub の親 Issue に記録し、推奨アクションを 1 件ずつ Issue にします。書き込む前に、投稿先と内容が示されて確認を求められます。断れば、結果は Markdown で出力されるだけです。
+4. 結果と JSON を GitHub の親 Issue に記録し、推奨アクションを 1 件ずつ Issue にします。書き込む前に、投稿先と内容が示されて確認を求められます。Issue に記録しないときは、JSON とレポートをファイル（`assessment-<評価日>.json` / `.md`）に保存でき、次回の再評価でそのパスを渡せます。
 
 生成されたスクリプトはリポジトリにコミットしてください。次回からはそれを使うので、再評価で同じ物差しを保てます。スクリプトのヘッダーには MIT の著作権表示が入っています。コミットするときも残してください。
+
+リポジトリに書き込めない、または書き込みたくないときは「書き込みなし」で呼び出します。スクリプトはリポジトリの外に一時的に生成され、指示書への追記も Issue の作成もしません。スクリプトに埋めた設定値は証拠 JSON の `header.config` に残るので、次回も同じ物差しでスクリプトを再生成できます。
+
+評価するのは、手元のチェックアウトで git が追跡しているファイルです。手元が既定ブランチの最新より古いと、最近追加された指示書などが欠けます。スキルは実行前にずれを確かめ、必要なら最新の既定ブランチを一時的な worktree に取り出して評価します（作業ツリーには触れません）。
 
 ### GitHub への書き込みと個人名について
 
@@ -103,7 +120,8 @@ ln -s ~/ai-sdlc-maturity-model-skills/skills/assessing-ai-sdlc-maturity ~/.claud
 │       ├── references/
 │       │   └── evidence-keys.md
 │       └── templates/
-│           └── collect-evidence.template.sh
+│           ├── collect-evidence.template.sh
+│           └── report.template.md   # レポートの雛形
 ├── CHANGELOG.md
 ├── LICENSE                    # MIT License
 ├── README.md

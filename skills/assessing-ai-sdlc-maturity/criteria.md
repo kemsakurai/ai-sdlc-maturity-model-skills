@@ -1,4 +1,4 @@
-# 判定基準シート 0.2.0
+# 判定基準シート 0.3.0
 
 正本。版はスキル全体で 1 つの SemVer を使う。項目の追加や判定基準の文言を変えたら minor 以上を上げ、リポジトリの CHANGELOG（https://github.com/kemsakurai/ai-sdlc-maturity-model-skills/blob/main/CHANGELOG.md）に理由を残す。再評価は前回と major・minor が同じ版で行う。patch だけが違う版どうしは判定基準が同じなので比較できるが、major・minor が違うと比較できない。
 
@@ -49,12 +49,14 @@ N/A 注記（リポジトリの種類）：本番環境やデータを持たな�
 - N/A の項目は、軸スコア・全体の中央値・平均・最小値の集計から除き、除いた項目名を併記する。
 - E（テスト）・F（デプロイ）はどの種類でも採点する。AI 以外の自動化（テストやリリースの自動化）が充実していても、各レベルの AI に関する基準を満たさなければスコアは上げない。自動化の状況は「所見」に書く。
 
+外部運用の申告：GitHub の外（課題管理ツール、Wiki、別リポジトリの構成管理等）で回している工程は「未確認 = 未達」として採点し、**スコアは変えない**。そのうえで、チームから外部で運用していると申告があった項目は、採点表の「外部運用」列に `申告あり` と書き、申告の出どころ（外部ツールへのリンク一覧のファイル、親 Issue のコメント、評価時のユーザーの回答）と、その工程を行っている場所を添える。こうして「本当に無い 0」と「外にあるので見えない 0」を区別し、推奨アクションでは、前者を仕組みを作る提案、後者を記録をリポジトリに残す（または外部の記録へのリンクを置く）提案に分ける。
+
 ## 項目別の判定基準
 
 各項目：出典 → −1 / 0 / 1 / 2 / 3 / 4 / 5 の順。「参照する証拠キー」はプロジェクト固有の `collect-evidence.sh` が出力する JSON の `evidence.<key>` に対応する（値そのものではなくレベル判定のヒント。3 以上に必要な運用の証拠があるかどうかは、人またはエージェントが判断する）。
 
 ### A. エージェント運用知識の蓄積と継承（DEFRA：Skills Development / Gigacore：AI Literacy）
-参照する証拠キー：`a.agent_instruction_files`, `a.skills_count`, `a.rule_history_doc_present`
+参照する証拠キー：`a.agent_instruction_files`, `a.skills_count`, `a.rule_history_doc_present`, `a.rule_files_count`, `a.rule_change_commits_window`
 - −1 AI 利用に関する知見の共有を拒む・禁じている
 - 0 使い方は個人の記憶頼みで文書化されていない
 - 1 使い方のメモや試行の記録が散発的に存在する
@@ -72,6 +74,10 @@ N/A 注記（リポジトリの種類）：本番環境やデータを持たな�
 - 3 要件の品質を AI/ルールで機械的に検査する仕組みと設計ゲートが運用されている
 - 4 検査結果が計画・優先順位付けに組み込まれ、要件の欠落を AI が提案する
 - 5 AI が継続的ディスカバリーで要件の発生源まで扱う
+- 1〜2 の充足例と非充足例：
+  - 1 を満たす：Issue テンプレートに受け入れ条件・対象範囲・完了の定義の欄があり、AI に要件を書かせる・読ませる前提で項目を試している（テンプレートや関連文書に AI 向けである旨の記載や、AI が書いた Issue の実例がある）。
+  - 1 を満たさない：Issue テンプレートはあるが、再現手順や環境だけを尋ねる人向けの様式で、AI に要件を渡すことを想定した形跡が無い（テンプレートの存在だけでは 1 にしない）。
+  - 2 を満たす：エージェントが着手できる状態を示すラベルやテンプレートの必須欄が定義され、実際にそのラベルの Issue をエージェントが処理している。
 
 ### C. システム設計・アーキテクチャ（DEFRA：System Design + Software Architecture）
 参照する証拠キー：`c.adr_count`, `c.adr_duplicates`, `c.arch_lint_configured`, `c.arch_lint_enforced`
@@ -132,9 +138,14 @@ N/A 注記（リポジトリの種類）：本番環境やデータを持たな�
 - 3 データの整合性検査・ライセンスの分類・派生データと元データのずれの検査が自動化されている
 - 4 AI 出力の品質を決定論的ゲートで監査し、出自（provenance）を追跡する
 - 5 AI がデータ品質を自律的に改善する
+- 1〜2 の充足例と非充足例（リポジトリの種類ごと）：
+  - データ基盤：1 は AI で取り込み・変換の処理を書いた・試した記録（PR・Issue）がある。2 はその処理がパイプラインとして定義され、同じ入力から同じ出力を再現できる。
+  - 本番サービス（RDB とスキーマ移行が中心）：1 はスキーマ移行（マイグレーション）を AI で書いた・レビューさせた記録がある、または移行ファイルに AI 向けの規約（命名、後方互換、ロールバックの書き方）を当てている。2 はその規約が指示書やルールとして明文化され、移行の PR で意図して使われている。
+  - 1 を満たさない：スキーマ移行の仕組み（Flyway・Liquibase 等）があるだけで、AI が関わった形跡が無い（仕組みの存在は AI の探索にならない）。
+  - 判断が境界的なときは低い方のレベルを採り、境界的と判断した理由を項目別の「主な証拠」に書く。
 
 ### I. 開発環境・パイプラインへの AI 組み込み（Gigacore：Tooling Integration）
-参照する証拠キー：`i.tool_integration_files`, `i.local_guardrail_hooks_count`
+参照する証拠キー：`i.tool_integration_files`, `i.local_guardrail_hooks_count`, `i.agent_hooks_count`, `i.agent_permission_denies_count`
 - −1 ツール導入を禁止している
 - 0 外部 AI ツールを単独で利用する
 - 1 組織が承認したツールを拡張機能として利用する
@@ -154,7 +165,7 @@ N/A 注記（リポジトリの種類）：本番環境やデータを持たな�
 - 5 適応的ガバナンスで、外部標準に貢献する
 
 ### K. 透明性・監査証跡（DEFRA：Governance metric「AI decision auditability」）
-参照する証拠キー：`k.coauthored_count`, `k.coauthored_by_model`, `k.coauthored_ratio_lower_bound`
+参照する証拠キー：`k.coauthored_count`, `k.coauthored_by_model`, `k.coauthored_ratio_lower_bound`, `k.coauthored_ratio_window`
 - −1 記録を拒む
 - 0 AI の作業は記録されない
 - 1 一部セッションのログがある
@@ -164,7 +175,7 @@ N/A 注記（リポジトリの種類）：本番環境やデータを持たな�
 - 5 監査証跡が外部監査に耐える形式で公開される
 
 ### L. 人間–AI・AI–AI の協働プロトコル（DEFRA：Collaboration & Communication / Gigacore：AI-Augmented Collaboration）
-参照する証拠キー：`l.pr_review_stats_window`, `l.pr_authors_window`
+参照する証拠キー：`l.pr_review_stats_window`, `l.pr_authors_window`, `l.ai_pr_stats_window`
 - −1 協働の取り決めを拒む
 - 0 個人が AI を使い、調整がない
 - 1 AI 利用を意図的に宣言する
