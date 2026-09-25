@@ -1,6 +1,6 @@
 {
   "name": "ai-sdlc-maturity",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "GitHub リポジトリの git 履歴・Issue・PR・Actions を証拠に、AI-SDLC 成熟度を固定の判定基準で採点するスキル",
   "author": {
     "name": "kemsakurai",

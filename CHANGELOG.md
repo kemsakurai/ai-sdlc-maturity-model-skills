@@ -2,6 +2,45 @@
 
 このプロジェクトは [Semantic Versioning](https://semver.org/lang/ja/) に従います。スキル本体と判定基準シートは 1 つの版番号を共有します。`criteria.md` の判定基準を変えたときは、以前の採点と比較できなくなるので、少なくともマイナーバージョンを上げます。patch だけが違う版どうしの採点は比較できます。
 
+## [0.2.0] - 2026-09-25
+
+kemsakurai/action-pmd でのドッグフーディング（Claude Code on the web で実行）で見つかった問題を直しました。`criteria.md` に N/A の規定を加えたので、minor バージョンを上げました。各レベルの判定基準の文言は変えていません。0.1.x の採点と比べるときは、N/A にした項目を除いたうえで、下の「証拠の値が変わるキー」の影響を確かめてください。
+
+### 判定基準（`criteria.md`）
+
+- リポジトリの種類ごとの N/A 注記を加えた。本番環境を持たないライブラリ・GitHub Action・CLI では G（監視）を N/A にでき、H（データ管理）と M（合成ユーザーリサーチ）も条件付きで N/A にできる。データ基盤では M を条件付きで N/A にできる。N/A の項目は集計（軸スコア・中央値・平均・最小値）から除く。
+- AI 以外の自動化が充実していても、AI の基準を満たさない項目はスコアを上げず、所見に書くことを明記した。
+
+### 修正
+
+- 生成した証拠収集スクリプトが自分自身の本文に一致し、監視の設定が無いリポジトリでも `g.monitoring_configured` が `true` になっていた。`MONITORING_DIRS` の既定値に入っている `scripts` の下に、既定の配置先 `scripts/ai-sdlc/` があったため。設定ファイルの grep（監視・ゲート・ドキュメントの検索）の対象から、スクリプト自身とテンプレートを外した。`scripts` は、本物の監視スクリプトを見落とさないように既定値に残した。
+- GraphQL API が使えない環境（Claude Code on the web 等）で、GitHub から取る 11 キーがすべて `null` になっていた。最初の確認に `gh repo view`（GraphQL）を使っていたため。
+  - 対象の `owner/name` を git のリモートから決め、疎通確認・Issue のラベル一覧・件数の取得を REST API（`gh api`）に置き換えた。
+  - `l.*` の PR 一覧だけは GraphQL（1 回で済む）で取り、失敗したら REST API（検索 API と PR ごとの API）で取り直す。bot のログインは、どちらの経路でも `app/<name>` の表記にそろえる。
+- HTTP 403 と「GraphQL is not available」を、再試行しても直らない失敗として扱い、再試行しないようにした（1 か所あたり約 9 秒の待ちが無くなる）。ただし、レート制限による 403 は再試行する。
+
+### 追加
+
+- GitHub Copilot のパス別指示書（`.github/instructions/`）、`.github/prompts`、`.github/chatmodes`、`.windsurfrules`、`.clinerules`、`CONVENTIONS.md` を、`a.agent_instruction_files`・`i.tool_integration_files`・`j.governance_docs_present` の探索対象に加えた（`i.*` には `CONVENTIONS.md` を除く）。
+- 出力 JSON のヘッダーに `last_commit_date`（最後のコミットの日付）と `single_author_basis`（単独メンテナと判定した根拠）を加えた。
+- 証拠キーに `note` を加えた。集計期間にコミットが無いとき、`d.commits_window`（0）と `d.pr_commit_ratio_window`（`null`）に理由が入る。`gh` の失敗による `null` と見分けられる。
+- `SKILL.md`：`gh` を使えない環境で、GitHub MCP のツールや REST API で値を補完する手順と、その記録方法（`"supplemented": true`）を加えた。休眠中のリポジトリで集計期間を確かめる手順、配置先の確認に応答が無いときの扱い、リポジトリの種類の判断と N/A の集計の仕方を加えた。未運用の兆候として、ワークフローの `action_required`（承認待ちで実行されていない）を `skipped` と並べて挙げた。
+- テスト：GraphQL だけが使えない場合、レート制限、リモートが無い・休眠中のリポジトリ、スクリプトを既定のパスに置いた場合、`.mailmap` と PR の作成者による単独メンテナの判定のケースを加えた。偽の `gh` は REST API の生の応答を返し、`--jq` の式は本物の `jq` で評価する。
+
+### 変更
+
+- 単独メンテナの判定（`header.single_author`）：コミット著者を `.mailmap` で名寄せし（`git log --use-mailmap`）、bot を除いて数えるようにした。コミット著者が 2 名以上でも、集計期間にマージされた PR の作成者（bot を除く）が 1 名なら `true` にする。`header.authors_top5` も名寄せ後の名前になる。
+
+### 証拠の値が変わるキー
+
+実在する 2 つのリポジトリ（kemsakurai/action-pmd、kemsakurai/scrum-guides）で 0.1.2 と比べた結果です。ほかのキーの値は 0.1.2 と同じでした。
+
+- `a.agent_instruction_files`・`i.tool_integration_files`・`j.governance_docs_present`：上記の探索対象を置いているリポジトリで値が変わる（action-pmd では `[]` → `[".github/instructions"]`、`false` → `true`）。
+- `b.issues_open_count`・`b.issues_closed_count`・`m.user_research_issues_count`：検索 API の `total_count` で数えるので、上限（500・1000）に張り付かなくなった（`limit` は `null`）。scrum-guides の `b.issues_closed_count` は 1000 → 1178。
+- `n.retro_prs_window_count`：0.1.x では GraphQL の検索で `in:title` が OR の全体に効かず、タイトルにふりかえり系の語を含まない PR まで数えていた。scrum-guides では 40 → 4（40 件のうちタイトルに該当する語を含むのは 4 件だけ）。
+- `g.monitoring_configured`：証拠収集スクリプトを `MONITORING_DIRS` の中に置いていたリポジトリでは、`true` から `false` に変わることがある（誤検知が無くなる）。
+- `header.authors_top5`・`header.single_author`：`.mailmap` があるリポジトリや、bot のコミットがあるリポジトリで変わる。
+
 ## [0.1.2] - 2026-09-24
 
 判定基準（`criteria.md` の文言）は 0.1.1 と同じです。`gh` がすべて成功したときの証拠の値も 0.1.1 と同じです（実在するリポジトリで 44 キーすべての一致を確認）。

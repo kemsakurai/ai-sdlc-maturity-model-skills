@@ -27,7 +27,7 @@ GitHub リポジトリの git 履歴・ファイル・Issue・PR・GitHub Action
 
 - [Claude Code](https://docs.claude.com/en/docs/claude-code)（`SKILL.md` 形式のスキルを読めるエージェント）
 - `git`、`jq`、`curl`
-- [GitHub CLI](https://cli.github.com/)（`gh`）。対象リポジトリを読める権限で `gh auth login` を済ませておく
+- [GitHub CLI](https://cli.github.com/)（`gh`）。対象リポジトリを読める権限で `gh auth login` を済ませておく。`gh` が入っていないクラウド環境（Claude Code on the web 等）では、[公式のリリース](https://github.com/cli/cli/releases) からバイナリを取得し、環境変数 `GH_TOKEN` で認証する。証拠の収集は GraphQL API が使えない環境でも REST API で動く
 - 対象リポジトリが GitHub にあること
 
 ## インストール
