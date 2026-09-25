@@ -1,18 +1,21 @@
 #!/usr/bin/env bash
 # =============================================================================
-# 証拠収集スクリプト（読み取り専用、criteria.md 0.2.0 準拠）
+# 証拠収集スクリプト（読み取り専用、criteria.md 0.3.0 準拠）
 # このファイルは assessing-ai-sdlc-maturity スキルによりプロジェクト固有に生成されました。
 # https://github.com/kemsakurai/ai-sdlc-maturity-model-skills
 #
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2026 kemsakurai
 #
-# 使い方: collect-evidence.sh [対象リポジトリのパス] [--window-days N] [--anonymize-authors]
-#   --anonymize-authors  コミット著者名と PR 作成者のログイン名を author-1, author-2, … に置き換える。
-#                        証拠 JSON を公開の Issue などに投稿するときに使う。
+# 使い方: collect-evidence.sh [対象リポジトリのパス] [--window-days N] [--anonymize-authors] [--framework-checked-at YYYY-MM-DD]
+#   --anonymize-authors     コミット著者名と PR 作成者のログイン名を author-1, author-2, … に置き換える。
+#                           証拠 JSON を公開の Issue などに投稿するときに使う。
+#   --framework-checked-at  上流フレームワーク（DEFRA / Gigacore）との差分を最後に確認した日。header.framework_checked_at に入る。
 # 必要なコマンド: git (2.22 以上), gh (認証済み), jq
 # 環境変数: GH_RETRY_MAX（gh の最大試行回数、既定 3）、GH_RETRY_SLEEP（再試行の基本間隔の秒数、既定 3）
 #
+# ファイルの有無と中身は、git で追跡されているファイルだけを見る（未追跡のファイルは数えない）。
+# 評価したブランチ・コミットと、既定ブランチからの遅れは header.evaluated_ref に入る。
 # GitHub からの取得は REST API（gh api / gh run list）で行う。GraphQL API が使えない環境（Claude Code on the web 等）でも
 # 取得できるようにするため。GraphQL を使うのは l.* の PR 一覧だけで、失敗したら REST で取り直す。
 # gh で取得できなかったキーは、値を null にして error に理由を残す（0 とは書かない）。
@@ -20,14 +23,19 @@
 # =============================================================================
 set -u
 
-CRITERIA_VERSION="0.2.0"
-SKILL_VERSION="0.2.0"
+# git が ASCII 以外のパス（日本語のファイル名など）を "\350\252..." のように引用符付きで出力しないようにする
+# （git の既定は core.quotePath=true で、そのままだと ls-files / grep の出力とパスの照合が一致しない）
+git() { command git -c core.quotePath=false "$@"; }
+
+CRITERIA_VERSION="0.3.0"
+SKILL_VERSION="0.3.0"
 # このスクリプト自身とテンプレートは、設定ファイルの grep の対象から外す（自分の本文にある検索語に一致しないように）
 SELF_NAME="$(basename "$0")"
 TEMPLATE_NAME="collect-evidence.template.sh"
 WINDOW_DAYS=90
 TARGET_PATH="."
 ANONYMIZE_AUTHORS=0
+FRAMEWORK_CHECKED_AT=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -39,6 +47,10 @@ while [ $# -gt 0 ]; do
       ANONYMIZE_AUTHORS=1
       shift
       ;;
+    --framework-checked-at)
+      FRAMEWORK_CHECKED_AT="$2"
+      shift 2
+      ;;
     *)
       TARGET_PATH="$1"
       shift
@@ -46,10 +58,15 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+if [ -n "$FRAMEWORK_CHECKED_AT" ] && ! printf '%s' "$FRAMEWORK_CHECKED_AT" | grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'; then
+  echo "エラー: --framework-checked-at は YYYY-MM-DD で指定してください" >&2; exit 1
+fi
 if [ -n "$TARGET_PATH" ] && [ "$TARGET_PATH" != "." ]; then
   cd "$TARGET_PATH" || { echo "エラー: $TARGET_PATH に移動できません" >&2; exit 1; }
 fi
 git rev-parse --is-inside-work-tree >/dev/null 2>&1 || { echo "エラー: $(pwd) は git リポジトリではありません" >&2; exit 1; }
+# パスはすべてリポジトリのルートからの相対で扱う
+cd "$(git rev-parse --show-toplevel)" || exit 1
 
 # =============================================================================
 # [プロジェクト固有設定ブロック]
@@ -57,6 +74,7 @@ git rev-parse --is-inside-work-tree >/dev/null 2>&1 || { echo "エラー: $(pwd)
 # - 空文字のままにした項目は、各セクションの既定値が使われます。
 # - '...' で囲まれた項目の値には一重引用符（'）を入れないでください。引用符が要るときは二重引用符（"）を使います。
 # - "..." で囲まれた項目の値には二重引用符（"）・$・` を入れないでください。
+# - ここで埋めた値は、出力 JSON の header.config にそのまま記録されます（スクリプトを残さなくても再生成できるように）。
 # =============================================================================
 # ADR（設計決定記録）ディレクトリ
 ADR_DIR="{{ADR_DIR}}"
@@ -66,6 +84,9 @@ CHANGELOG_FILE="{{CHANGELOG_FILE}}"
 
 # ルール履歴ドキュメントのパス候補（空白区切り）
 RULE_HISTORY_FILES="{{RULE_HISTORY_FILES}}"
+
+# 識別子付きのルールファイルを見分ける正規表現（ERE。リポジトリのルートからの相対パスに一致させる）
+RULE_FILES_REGEX='{{RULE_FILES_REGEX}}'
 
 # テストファイルの探索条件（find の式）
 # 例: -name "test_*.py" -o -name "*.test.ts" -o -name "*_test.go"
@@ -120,7 +141,12 @@ DOC_DIRS="{{DOC_DIRS}}"
 
 # AI エージェントの Co-authored-by トレーラーを見分ける正規表現（名前またはメールに一致させる）
 AI_COAUTHOR_REGEX='{{AI_COAUTHOR_REGEX}}'
+
+# AI のレビュアー・PR を作る AI エージェントの GitHub ログインを見分ける正規表現
+AI_REVIEWER_REGEX='{{AI_REVIEWER_REGEX}}'
+AI_AGENT_LOGIN_REGEX='{{AI_AGENT_LOGIN_REGEX}}'
 # =============================================================================
+CONFIG_VARS="ADR_DIR CHANGELOG_FILE RULE_HISTORY_FILES RULE_FILES_REGEX TEST_FILE_FIND_EXPR TEST_CASE_REGEX COVERAGE_GATE_FILES ARCH_LINT_CONFIG_FILES ARCH_LINT_ENFORCE_PATTERN ENFORCEMENT_FILES DEPLOY_WORKFLOW_REGEX ROLLBACK_DOC_FILES MONITORING_PATTERNS MONITORING_DIRS DATA_LABELS_REGEX DATA_GATE_PATTERN USER_RESEARCH_REGEX RETRO_DOC_REGEX RETRO_PR_SEARCH VALUE_METRIC_REGEX QUANTITATIVE_IMPACT_REGEX ROADMAP_LABELS_REGEX DOC_DIRS AI_COAUTHOR_REGEX AI_REVIEWER_REGEX AI_AGENT_LOGIN_REGEX"
 
 TMP_JSONL="$(mktemp)"
 GH_ERR_FILE="$(mktemp)"
@@ -138,11 +164,58 @@ compute_window_start() {
   fi
 }
 
+# epoch_to_iso <秒> : UTC の ISO 8601 にする（GNU / BSD の date の両方に対応）
+epoch_to_iso() {
+  date -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -r "$1" +%Y-%m-%dT%H:%M:%SZ
+}
+
+# file_mtime_epoch <path> : ファイルの更新日時（秒）。無ければ何も出さない
+file_mtime_epoch() {
+  [ -e "$1" ] || return 0
+  stat -c %Y "$1" 2>/dev/null || stat -f %m "$1"
+}
+
 WINDOW_START="$(compute_window_start "$ASSESSED_DATE" "$WINDOW_DAYS")"
 WINDOW_END="$ASSESSED_DATE"
 
 HEAD_SHA="$(git rev-parse HEAD)"
 LAST_COMMIT_DATE="$(git log -1 --format='%cs')"
+
+# ---------------------------------------------------------------------------
+# 評価したブランチと、既定ブランチとのずれ
+# ローカルのチェックアウトが既定ブランチの最新より古いと、最近追加された指示書・ワークフロー等が欠ける。
+# ---------------------------------------------------------------------------
+CURRENT_BRANCH="$(git branch --show-current)"
+DEFAULT_BRANCH="$(git symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null | sed 's#^origin/##')"
+if [ -z "$DEFAULT_BRANCH" ]; then
+  for b in main master; do
+    git rev-parse -q --verify "refs/remotes/origin/$b" >/dev/null && { DEFAULT_BRANCH="$b"; break; }
+  done
+fi
+BEHIND_DEFAULT="null"
+# 既定ブランチを評価しているか：ブランチ名が同じか、HEAD が origin/<既定ブランチ> と同じコミットなら true
+# （origin/<既定ブランチ> を git worktree add で取り出すと detached HEAD になり、ブランチ名は空になるため）
+IS_DEFAULT_BRANCH="null"
+if [ -n "$DEFAULT_BRANCH" ]; then
+  IS_DEFAULT_BRANCH="false"
+  [ "$CURRENT_BRANCH" = "$DEFAULT_BRANCH" ] && IS_DEFAULT_BRANCH="true"
+fi
+if [ -n "$DEFAULT_BRANCH" ] && DEFAULT_SHA="$(git rev-parse -q --verify "refs/remotes/origin/$DEFAULT_BRANCH")"; then
+  BEHIND_DEFAULT="$(git rev-list --count "HEAD..refs/remotes/origin/$DEFAULT_BRANCH")"
+  [ "$DEFAULT_SHA" = "$HEAD_SHA" ] && IS_DEFAULT_BRANCH="true"
+fi
+# 最後に fetch した日時は FETCH_HEAD の更新日時。FETCH_HEAD は worktree ごとに別で、メインのチェックアウトで fetch すると
+# 共通の git ディレクトリに、worktree で fetch するとその worktree 専用のディレクトリに書かれる。両方を見て新しい方を採る
+FETCH_EPOCH="$(for fh in "$(git rev-parse --git-common-dir)/FETCH_HEAD" "$(git rev-parse --git-path FETCH_HEAD)"; do
+    file_mtime_epoch "$fh"
+  done | sort -n | tail -1)"
+LAST_FETCH_AT=""
+[ -n "$FETCH_EPOCH" ] && LAST_FETCH_AT="$(epoch_to_iso "$FETCH_EPOCH")"
+UNCOMMITTED_CHANGES="false"
+[ -n "$(git status --porcelain --untracked-files=no)" ] && UNCOMMITTED_CHANGES="true"
+
+# 追跡されているファイルの一覧（リポジトリのルートからの相対パス）
+ALL_TRACKED="$(git ls-files)"
 
 # emit <key> <command> <limit-or-empty> <value-json> [note]
 # note は、gh の失敗以外の理由で値が null になるときなどに、その理由を残す
@@ -250,30 +323,32 @@ uniq_c_to_object() {
   jq -R -s 'split("\n") | map(select(length>0)) | map(capture("^\\s*(?<count>[0-9]+)\\s+(?<v>.+)$")) | map({(.v): (.count|tonumber)}) | add // {}'
 }
 
-# existing_paths <path>... : 存在するパスだけを 1 行ずつ出力する（glob は呼び出し側で展開済み）
-existing_paths() {
-  local p
-  for p in "$@"; do [ -e "$p" ] && printf '%s\n' "$p"; done
-  return 0
-}
+# ---------------------------------------------------------------------------
+# 追跡されているファイルだけを見るための関数
+# 未追跡のファイル（ローカルにしかない指示書など）を「存在する」と数えないようにする。
+# ---------------------------------------------------------------------------
+# tracked <パス（glob 可）> : そのパス（ディレクトリならその下）に追跡されているファイルがあれば 0
+tracked() { [ -n "$(git ls-files -- "$1" | head -1)" ]; }
 
-# list_file_names <dir> : ディレクトリ直下のファイル名を 1 行ずつ、名前順に出力する（ディレクトリが無ければ何も出さない）
+# list_file_names <dir> : ディレクトリ直下の追跡されているファイル名を 1 行ずつ、名前順に出力する
 list_file_names() {
-  [ -d "$1" ] || return 0
-  find "$1" -mindepth 1 -maxdepth 1 -type f -exec basename {} \; | LC_ALL=C sort
+  git ls-files -- "$1" | awk -v d="${1%/}/" 'index($0, d) == 1 { r = substr($0, length(d) + 1); if (r !~ /\//) print r }' | LC_ALL=C sort
 }
 
-# grep_any [-i] <ERE> <path>... : 存在するパスだけを再帰検索し、1 件でも一致すれば 0 を返す。
-# grep は読めないパスが 1 つでもあると、一致があっても終了コード 2 を返すので、先に存在するものだけに絞る。
+# SELF_EXCLUDES : git grep で、このスクリプト自身とテンプレートを除くパススペック
+SELF_EXCLUDES=(":(exclude,glob)**/$SELF_NAME" ":(exclude,glob)**/$TEMPLATE_NAME")
+
+# grep_any [-i] <ERE> <path>... : 追跡されているファイルのうち、指定したパスの下を検索し、1 件でも一致すれば 0 を返す。
 # このスクリプト自身とテンプレートは検索しない（本文にある既定の検索語に一致してしまうため）。
 grep_any() {
   local icase=""
   if [ "$1" = "-i" ]; then icase="-i"; shift; fi
   local ptn="$1"; shift
   local found=() p
-  for p in "$@"; do [ -e "$p" ] && found+=("$p"); done
+  for p in "$@"; do tracked "$p" && found+=("$p"); done
   [ ${#found[@]} -gt 0 ] || return 1
-  grep -rqE $icase --exclude="$SELF_NAME" --exclude="$TEMPLATE_NAME" -- "$ptn" "${found[@]}" 2>/dev/null
+  # shellcheck disable=SC2086
+  git grep -qE $icase -e "$ptn" -- "${found[@]}" "${SELF_EXCLUDES[@]}" 2>/dev/null
 }
 
 # regex_to_gh_query <a|b|c> : GitHub 検索用に `a OR b OR c` へ変換する
@@ -345,34 +420,60 @@ ENFORCE_TARGETS="${ENFORCEMENT_FILES:-.pre-commit-config.yaml .husky lefthook.ym
 # A. エージェント運用知識の蓄積と継承
 # ---------------------------------------------------------------------------
 # エージェント向けの指示書（GitHub Copilot のパス別指示書 .github/instructions/*.instructions.md 等を含む）
-AGENT_INSTRUCTION_PATHS="AGENTS.md CLAUDE.md GEMINI.md .agents .claude .cursor .github/copilot-instructions.md .github/instructions .github/prompts .github/chatmodes .windsurfrules .clinerules CONVENTIONS.md"
+AGENT_INSTRUCTION_PATHS="AGENTS.md CLAUDE.md GEMINI.md .agents .claude .cursor .github/copilot-instructions.md .github/instructions .github/prompts .github/chatmodes .github/skills .windsurfrules .clinerules CONVENTIONS.md"
 A_FILES=()
 for f in $AGENT_INSTRUCTION_PATHS; do
-  [ -e "$f" ] && A_FILES+=("$f")
+  tracked "$f" && A_FILES+=("$f")
 done
 A_FILES_JSON="$(printf '%s\n' "${A_FILES[@]:-}" | lines_to_array)"
-emit "a.agent_instruction_files" "ls $AGENT_INSTRUCTION_PATHS" "" "$A_FILES_JSON"
+emit "a.agent_instruction_files" "git ls-files $AGENT_INSTRUCTION_PATHS" "" "$A_FILES_JSON"
 
-# スキルはディレクトリ（またはその symlink）単位で数え、同名は 1 つにまとめる
-A_SKILLS_COUNT="$(for d in .agents/skills .claude/skills skills; do
-    [ -d "$d" ] && find "$d" -mindepth 1 -maxdepth 1 \( -type d -o -type l \) -exec basename {} \;
-  done | sort -u | wc -l | tr -d ' ')"
-emit "a.skills_count" "find .agents/skills .claude/skills skills -mindepth 1 -maxdepth 1 (dir|symlink) | sort -u | wc -l" "" "$(json_int "$A_SKILLS_COUNT")"
+# スキルはディレクトリ（またはその symlink）単位で数え、同名は 1 つにまとめる。
+# 直下の通常ファイル（README.md、.gitkeep 等）は数えない。git ls-files -s の 1 列目が 120000 なら symlink
+SKILL_DIRS=".agents/skills .claude/skills .github/skills skills"
+A_SKILLS_COUNT="$(for d in $SKILL_DIRS; do
+    git ls-files -s -- "$d" | awk -v d="$d/" '{
+      mode = $1; path = $0; sub(/^[^\t]*\t/, "", path)
+      if (index(path, d) != 1) next
+      r = substr(path, length(d) + 1)
+      if (r ~ /\//) { sub(/\/.*/, "", r); print r } else if (mode == "120000") print r
+    }'
+  done | sort -u | grep -c . || true)"
+emit "a.skills_count" "git ls-files $SKILL_DIRS: distinct first-level entries" "" "$(json_int "$A_SKILLS_COUNT")"
 
 A_RULE_HISTORY="0"
 for rf in ${RULE_HISTORY_FILES:-docs/rule-history.md rule-history.md}; do
-  [ -f "$rf" ] && { A_RULE_HISTORY="1"; break; }
+  tracked "$rf" && { A_RULE_HISTORY="1"; break; }
 done
 emit "a.rule_history_doc_present" "check rule-history docs" "" "$(json_bool "$A_RULE_HISTORY")"
+
+# 識別子付きのルールファイル（Cursor の .mdc、Copilot のパス別指示書、Claude / Windsurf / Cline のルール等）
+RULE_PTN="${RULE_FILES_REGEX:-^\.cursor/rules/.+\.mdc$|^\.github/instructions/.+\.instructions\.md$|^\.claude/rules/.+\.md$|^\.agents/rules/.+\.md$|^\.windsurf/rules/.+\.md$|^\.clinerules/.+\.md$}"
+A_RULE_FILES="$(printf '%s\n' "$ALL_TRACKED" | grep -cE -- "$RULE_PTN" || true)"
+emit "a.rule_files_count" "git ls-files | grep -E RULE_FILES_REGEX" "" "$(json_int "$A_RULE_FILES")"
+
+# 窓内に、指示書・ルール・ルール履歴のパスを変えた既定ブランチのコミット（squash なら PR）の数。
+# .claude・.agents 等はディレクトリごと対象なので、スキルや設定ファイルだけを変えたコミットも数える。ラベルや Issue フォームは見ない。
+# git log が失敗したときは 0 ではなく null と note を記録する
+A_RULE_CHANGES_CMD="git log --first-parent --since=<window-start> -- <agent instruction paths> <rule history files> | wc -l"
+# shellcheck disable=SC2086
+if A_RULE_CHANGES_LOG="$(git log --first-parent --since="$WINDOW_START" --format='%H' -- $AGENT_INSTRUCTION_PATHS ${RULE_HISTORY_FILES:-docs/rule-history.md rule-history.md} 2>"$GH_ERR_FILE")"; then
+  emit "a.rule_change_commits_window" "$A_RULE_CHANGES_CMD" "" "$(printf '%s' "$A_RULE_CHANGES_LOG" | grep -c . || true)"
+else
+  emit "a.rule_change_commits_window" "$A_RULE_CHANGES_CMD" "" "null" "git log failed: $(gh_last_error)"
+fi
 
 # ---------------------------------------------------------------------------
 # B. 要件定義
 # ---------------------------------------------------------------------------
-B_ISSUE_TMPL="0"; { [ -d .github/ISSUE_TEMPLATE ] || [ -f .github/issue_template.md ]; } && B_ISSUE_TMPL="1"
-emit "b.issue_template_exists" "check issue templates" "" "$(json_bool "$B_ISSUE_TMPL")"
+# GitHub はリポジトリのルート・docs/・.github/ のどこに置いたテンプレートでも使う（ファイル名の大文字小文字は問わない）
+B_ISSUE_TMPL="0"
+grep -qiE '^(\.github/|docs/)?issue_template(\.md$|/)' <<< "$ALL_TRACKED" && B_ISSUE_TMPL="1"
+emit "b.issue_template_exists" "git ls-files: issue_template.md or ISSUE_TEMPLATE/ in root, docs/ or .github/ (case-insensitive)" "" "$(json_bool "$B_ISSUE_TMPL")"
 
-B_PR_TMPL="0"; { [ -f .github/pull_request_template.md ] || [ -f .github/PULL_REQUEST_TEMPLATE.md ] || [ -d .github/PULL_REQUEST_TEMPLATE ]; } && B_PR_TMPL="1"
-emit "b.pr_template_exists" "check pr templates" "" "$(json_bool "$B_PR_TMPL")"
+B_PR_TMPL="0"
+grep -qiE '^(\.github/|docs/)?pull_request_template(\.md$|/)' <<< "$ALL_TRACKED" && B_PR_TMPL="1"
+emit "b.pr_template_exists" "git ls-files: pull_request_template.md or PULL_REQUEST_TEMPLATE/ in root, docs/ or .github/ (case-insensitive)" "" "$(json_bool "$B_PR_TMPL")"
 
 gh_int_key "b.issues_open_count" "gh api search/issues q='type:issue state:open' --jq .total_count" "" \
   api -X GET search/issues -f q="repo:$REPO_NWO type:issue state:open" -f per_page=1 --jq .total_count
@@ -389,7 +490,7 @@ ADR_NON_RECORD_REGEX='(^|/)(readme|index|template)[^/]*\.md$'
 adr_files() { list_file_names "$ADR_TARGET" | grep -E '\.md$' | grep -viE "$ADR_NON_RECORD_REGEX"; }
 
 C_ADR_COUNT="$(adr_files | wc -l | tr -d ' ')"
-emit "c.adr_count" "ls $ADR_TARGET | grep '\\.md$' (excluding README/index/template) | wc -l" "" "$(json_int "$C_ADR_COUNT")"
+emit "c.adr_count" "git ls-files $ADR_TARGET | grep '\\.md$' (excluding README/index/template) | wc -l" "" "$(json_int "$C_ADR_COUNT")"
 
 # ファイル名の最初の数字列を ADR 番号とみなし（先頭のゼロは無視）、同じ番号が複数あるものを列挙する
 C_ADR_DUP_JSON="$(adr_files | sed -nE 's/^[^0-9]*([0-9]+).*$/\1/p' | sed -E 's/^0+([0-9])/\1/' | sort | uniq -d | lines_to_array)"
@@ -397,7 +498,7 @@ emit "c.adr_duplicates" "detect duplicate ADR numbers (first digit run in the fi
 
 C_ARCH_CFG="0"
 for af in ${ARCH_LINT_CONFIG_FILES:-.importlinter .dependency-cruiser.* .eslintrc-boundaries.* archunit.properties}; do
-  [ -e "$af" ] && { C_ARCH_CFG="1"; break; }
+  tracked "$af" && { C_ARCH_CFG="1"; break; }
 done
 emit "c.arch_lint_configured" "check arch lint configs" "" "$(json_bool "$C_ARCH_CFG")"
 
@@ -438,12 +539,16 @@ emit "d.pr_commit_ratio_window" "git log --first-parent --since=<window-start>: 
 # E. テスト・QA
 # ---------------------------------------------------------------------------
 EXCLUDE_DIRS="-path '*/node_modules' -o -path '*/.worktrees' -o -path '*/.claude/worktrees' -o -path '*/.git' -o -path '*/vendor' -o -path '*/.venv' -o -path '*/venv' -o -path '*/site-packages' -o -path '*/.tox' -o -path '*/target' -o -path '*/dist' -o -path '*/build'"
-DEFAULT_TEST_FIND="-name 'test_*.py' -o -name '*_test.py' -o -name '*.test.ts' -o -name '*.test.tsx' -o -name '*.test.js' -o -name '*.spec.ts' -o -name '*.spec.js' -o -name '*_test.go' -o -name '*Test.java' -o -name '*_spec.rb'"
+DEFAULT_TEST_FIND="-name 'test_*.py' -o -name '*_test.py' -o -name '*.test.ts' -o -name '*.test.tsx' -o -name '*.test.js' -o -name '*.spec.ts' -o -name '*.spec.js' -o -name '*_test.go' -o -name '*Test.java' -o -name '*Test.kt' -o -name '*_spec.rb'"
 TEST_FIND="${TEST_FILE_FIND_EXPR:-$DEFAULT_TEST_FIND}"
-list_test_files() { eval "find . \\( $EXCLUDE_DIRS \\) -prune -o -type f \\( $TEST_FIND \\) -print0" 2>/dev/null; }
+# find で見つけたファイルのうち、追跡されているものだけを NUL 区切りで出す
+list_test_files() {
+  eval "find . \\( $EXCLUDE_DIRS \\) -prune -o -type f \\( $TEST_FIND \\) -print" 2>/dev/null | sed 's#^\./##' | \
+    grep -Fx -f <(printf '%s\n' "$ALL_TRACKED") | tr '\n' '\0'
+}
 
 E_TEST_FILES="$(list_test_files | tr -cd '\0' | wc -c | tr -d ' ')"
-emit "e.test_files_count" "find test files" "" "$(json_int "$E_TEST_FILES")"
+emit "e.test_files_count" "find test files (tracked only)" "" "$(json_int "$E_TEST_FILES")"
 
 # 一致した行を数える（-h でファイル名を付けずに行だけを出すので、ファイルが 1 件でも複数でも同じ形で数えられる）
 E_CASE_REGEX="${TEST_CASE_REGEX:-def test_|it\(|test\(|func Test|#\[test\]|@Test}"
@@ -452,8 +557,8 @@ emit "e.test_cases_count" "grep test cases across test files" "" "$(json_int "$E
 
 E_COV_GATE="0"
 # shellcheck disable=SC2086
-grep_any 'fail-under|fail_under|cov-fail|minimum-coverage|coverageThreshold|jacoco.*minimum' \
-  ${COVERAGE_GATE_FILES:-pytest.ini pyproject.toml setup.cfg .coveragerc jest.config.js jest.config.ts vitest.config.ts vitest.config.js} $ENFORCE_TARGETS \
+grep_any 'fail-under|fail_under|cov-fail|minimum-coverage|coverageThreshold|jacoco.*minimum|jacocoTestCoverageVerification|violationRules|koverVerify' \
+  ${COVERAGE_GATE_FILES:-pytest.ini pyproject.toml setup.cfg .coveragerc jest.config.js jest.config.ts vitest.config.ts vitest.config.js build.gradle build.gradle.kts pom.xml} $ENFORCE_TARGETS \
   && E_COV_GATE="1"
 emit "e.coverage_gate_configured" "check coverage gate in config/workflows" "" "$(json_bool "$E_COV_GATE")"
 
@@ -477,7 +582,7 @@ for df in $DEPLOY_FILES; do
 done
 if [ "$F_ROLLBACK" = "0" ]; then
   for rbd in ${ROLLBACK_DOC_FILES:-docs/rollback.md docs/ops/rollback.md docs/runbooks/rollback.md}; do
-    [ -f "$rbd" ] && { F_ROLLBACK="1"; break; }
+    tracked "$rbd" && { F_ROLLBACK="1"; break; }
   done
 fi
 emit "f.rollback_doc_present" "check rollback documentation in deploy workflows and docs" "" "$(json_bool "$F_ROLLBACK")"
@@ -541,17 +646,40 @@ emit "h.data_integrity_gate_configured" "check data/schema integrity gate in pre
 TOOL_INTEGRATION_PATHS=".claude/settings.json .cursor .cursorrules .github/copilot-instructions.md .github/instructions .github/prompts .github/chatmodes .gemini .aider.conf.yml .continue .windsurfrules .clinerules"
 I_FILES=()
 for f in $TOOL_INTEGRATION_PATHS; do
-  [ -e "$f" ] && I_FILES+=("$f")
+  tracked "$f" && I_FILES+=("$f")
 done
 I_FILES_JSON="$(printf '%s\n' "${I_FILES[@]:-}" | lines_to_array)"
 emit "i.tool_integration_files" "check AI tool config files ($TOOL_INTEGRATION_PATHS)" "" "$I_FILES_JSON"
 
 # ローカルで強制されるガードレール: pre-commit の repo: local フック数 + .husky のフックファイル数 + lefthook.yml の有無
-I_PRECOMMIT_LOCAL="$(grep -c 'repo: local' .pre-commit-config.yaml 2>/dev/null || true)"
-I_HUSKY="$(find .husky -maxdepth 1 -type f ! -name '.*' 2>/dev/null | wc -l | tr -d ' ')"
-I_LEFTHOOK="0"; [ -f lefthook.yml ] && I_LEFTHOOK="1"
+I_PRECOMMIT_LOCAL="0"
+tracked .pre-commit-config.yaml && I_PRECOMMIT_LOCAL="$(grep -c 'repo: local' .pre-commit-config.yaml 2>/dev/null || true)"
+I_HUSKY="$(list_file_names .husky | grep -vc '^\.' || true)"
+I_LEFTHOOK="0"; tracked lefthook.yml && I_LEFTHOOK="1"
 I_LOCAL_HOOKS=$(( $(json_int "$I_PRECOMMIT_LOCAL") + $(json_int "$I_HUSKY") + I_LEFTHOOK ))
 emit "i.local_guardrail_hooks_count" "count pre-commit repo: local + .husky hooks + lefthook.yml" "" "$I_LOCAL_HOOKS"
+
+# AI エージェントの設定で強制されるガードレール（Claude Code / Gemini CLI の settings.json の hooks、Claude Code の権限の拒否ルール）
+AGENT_SETTINGS_FILES=".claude/settings.json .gemini/settings.json"
+I_HOOKS=0
+I_DENIES=0
+I_SETTINGS_BROKEN=""
+for sf in $AGENT_SETTINGS_FILES; do
+  tracked "$sf" || continue
+  if ! jq -e . "$sf" >/dev/null 2>&1; then
+    I_SETTINGS_BROKEN="${I_SETTINGS_BROKEN}${I_SETTINGS_BROKEN:+, }$sf"
+    continue
+  fi
+  I_HOOKS=$(( I_HOOKS + $(jq '[(.hooks // {}) | .[]? | .[]? | .hooks[]?] | length' "$sf") ))
+  I_DENIES=$(( I_DENIES + $(jq '(.permissions.deny // []) | length' "$sf") ))
+done
+if [ -z "$I_SETTINGS_BROKEN" ]; then
+  emit "i.agent_hooks_count" "count hooks in $AGENT_SETTINGS_FILES" "" "$I_HOOKS"
+  emit "i.agent_permission_denies_count" "count permissions.deny rules in $AGENT_SETTINGS_FILES" "" "$I_DENIES"
+else
+  emit "i.agent_hooks_count" "count hooks in $AGENT_SETTINGS_FILES" "" "null" "invalid JSON: $I_SETTINGS_BROKEN"
+  emit "i.agent_permission_denies_count" "count permissions.deny rules in $AGENT_SETTINGS_FILES" "" "null" "invalid JSON: $I_SETTINGS_BROKEN"
+fi
 
 # ---------------------------------------------------------------------------
 # J. AI 利用ポリシーと機械的強制
@@ -560,12 +688,14 @@ emit "i.local_guardrail_hooks_count" "count pre-commit repo: local + .husky hook
 GOVERNANCE_PATHS="AGENTS.md CLAUDE.md GEMINI.md .github/copilot-instructions.md .github/instructions .windsurfrules .clinerules CONVENTIONS.md docs/ai-policy.md docs/governance.md docs/ai-guidelines.md"
 J_GOV="0"
 for gf in $GOVERNANCE_PATHS; do
-  [ -e "$gf" ] && { J_GOV="1"; break; }
+  tracked "$gf" && { J_GOV="1"; break; }
 done
 emit "j.governance_docs_present" "check governance docs ($GOVERNANCE_PATHS)" "" "$(json_bool "$J_GOV")"
 
 J_DEPENDABOT="0"
-{ [ -f .github/dependabot.yml ] || [ -f .github/dependabot.yaml ] || [ -f .github/renovate.json ] || [ -f renovate.json ]; } && J_DEPENDABOT="1"
+for df in .github/dependabot.yml .github/dependabot.yaml .github/renovate.json renovate.json; do
+  tracked "$df" && { J_DEPENDABOT="1"; break; }
+done
 emit "j.dependabot_or_renovate_present" "check dependabot/renovate" "" "$(json_bool "$J_DEPENDABOT")"
 
 # キー名は互換のため codeql のままだが、CodeQL 以外のセキュリティ系ワークフローも対象にする
@@ -594,17 +724,31 @@ else
 fi
 emit "k.coauthored_ratio_lower_bound" "coauthored_count / commit_count_total" "" "$K_RATIO"
 
+# 窓内の、マージコミットを除いたコミットに限った割合（歴史の長いリポジトリで、最近の実態を見るため）
+K_WIN_TRAILERS="$(git log --no-merges --since="$WINDOW_START" --format='%(trailers:key=Co-authored-by,valueonly,separator=%x1f)%x1e')"
+K_WIN_TOTAL="$(printf '%s' "$K_WIN_TRAILERS" | tr -cd '\036' | wc -c | tr -d ' ')"
+K_WIN_AI="$(printf '%s' "$K_WIN_TRAILERS" | tr '\036' '\n' | grep -ciE "$AI_CO_PTN" || true)"
+K_WIN_NOTE=""
+if [ "$(json_int "$K_WIN_TOTAL")" -gt 0 ]; then
+  K_WIN_RATIO="$(jq -n --argjson a "$(json_int "$K_WIN_AI")" --argjson b "$K_WIN_TOTAL" '(($a/$b)*1000|round)/1000')"
+else
+  K_WIN_RATIO="null"
+  K_WIN_NOTE="no non-merge commits in the window (last commit: $LAST_COMMIT_DATE)"
+fi
+emit "k.coauthored_ratio_window" "git log --no-merges --since=<window-start>: commits with an AI agent Co-authored-by trailer / all commits" "" "$K_WIN_RATIO" "$K_WIN_NOTE"
+
 # ---------------------------------------------------------------------------
 # L. 人間–AI・AI–AI の協働プロトコル
 # ---------------------------------------------------------------------------
-# 窓内にマージされた PR の一覧を 1 回だけ取得し、レビュー状況と作成者の両方に使う。
-# 一覧は [{reviews: 件数, comments: 件数, additions: 追加行数, author: ログイン}, …] にそろえる。
+# 窓内にマージされた PR の一覧を 1 回だけ取得し、レビュー状況・作成者・AI の関与に使う。
+# 一覧は [{reviews: 件数, comments: 件数, additions: 追加行数, author: ログイン, rv: [{login, state, at}]}, …] にそろえる。
 # まず GraphQL（gh pr list、1 回で済む）で取り、失敗したら REST（検索 API + PR ごとに 2 回）で取り直す。
 # bot のログインは GraphQL の表記（app/<name>）にそろえる（REST では <name>[bot] になる）。
 l_merged_prs_graphql() {
   local out
   out="$(gh_retry pr list --state merged --search "merged:>=$WINDOW_START" --json reviews,comments,additions,author -L "$GH_LIMIT")" || return 1
-  printf '%s' "$out" | jq -c '[.[] | {reviews: (.reviews | length), comments: (.comments | length), additions, author: .author.login}]'
+  printf '%s' "$out" | jq -c '[.[] | {reviews: (.reviews | length), comments: (.comments | length), additions, author: .author.login,
+    rv: [.reviews[] | {login: (.author.login // ""), state, at: (.submittedAt // "")}]}]'
 }
 l_merged_prs_rest() {
   local items line num additions reviews rows=""
@@ -614,9 +758,10 @@ l_merged_prs_rest() {
     [ -n "$line" ] || continue
     num="$(printf '%s' "$line" | jq '.number')"
     additions="$(gh_retry api "repos/$REPO_NWO/pulls/$num" --jq .additions)" || return 1
-    reviews="$(gh_retry api "repos/$REPO_NWO/pulls/$num/reviews?per_page=100" --jq length)" || return 1
-    rows+="$(printf '%s' "$line" | jq -c --argjson a "$(json_int "$additions")" --argjson r "$(json_int "$reviews")" \
-      '{reviews: $r, comments, additions: $a, author}')"$'\n'
+    reviews="$(gh_retry api "repos/$REPO_NWO/pulls/$num/reviews?per_page=100" \
+      --jq '[.[] | {login: (if .user.type == "Bot" then "app/" + (.user.login | sub("\\[bot\\]$"; "")) else .user.login end), state, at: (.submitted_at // "")}]')" || return 1
+    rows+="$(printf '%s' "$line" | jq -c --argjson a "$(json_int "$additions")" --argjson rv "$reviews" \
+      '{reviews: ($rv | length), comments, additions: $a, author, rv: $rv}')"$'\n'
   done <<< "$(printf '%s\n' "$items" | head -n "$GH_LIMIT")"
   printf '%s' "$rows" | jq -s -c '.'
 }
@@ -629,6 +774,8 @@ elif L_MERGED_PRS="$(l_merged_prs_graphql)"; then
 elif L_MERGED_PRS="$(l_merged_prs_rest)"; then
   L_ROUTE="gh api search/issues 'type:pr is:merged merged:>=<window-start>' + pulls/{n} + pulls/{n}/reviews (REST)"
 fi
+AI_REVIEWER_PTN="${AI_REVIEWER_REGEX:-copilot|coderabbit|claude|gemini|codex|cursor|devin|sourcery|qodo|greptile|ellipsis}"
+AI_AGENT_PTN="${AI_AGENT_LOGIN_REGEX:-copilot|devin|claude|codex|cursor|jules|openhands|sweep|gemini}"
 L_HUMAN_PR_AUTHORS=""
 if [ -n "$L_ROUTE" ]; then
   L_PR_STATS_JSON="$(printf '%s' "$L_MERGED_PRS" | jq -c \
@@ -636,12 +783,23 @@ if [ -n "$L_ROUTE" ]; then
   L_PR_AUTHORS_JSON="$(printf '%s' "$L_MERGED_PRS" | jq -r '.[].author' | \
     sort | uniq -c | sort -rn | uniq_c_to_array author | anonymize_authors pr-author)"
   L_HUMAN_PR_AUTHORS="$(printf '%s' "$L_MERGED_PRS" | jq --arg bot "$BOT_NAME_REGEX" '[.[].author | select(test($bot; "i") | not)] | unique | length')"
+  # AI の関与：AI エージェントが作った PR、AI のレビュアーが付いた PR、AI のレビューの後に人が承認した PR
+  L_AI_STATS_JSON="$(printf '%s' "$L_MERGED_PRS" | jq -c --arg ai "$AI_REVIEWER_PTN" --arg agent "$AI_AGENT_PTN" --arg bot "$BOT_NAME_REGEX" '
+    def is_ai: test($ai; "i");
+    def is_human: (is_ai | not) and (test($bot; "i") | not);
+    {count: length,
+     ai_authored: ([.[] | select(.author | test($agent; "i"))] | length),
+     ai_reviewed: ([.[] | select(any(.rv[]; .login | is_ai))] | length),
+     human_approved_after_ai_review: ([.[] | ([.rv[] | select(.login | is_ai) | .at] | min) as $t
+       | select($t != null and any(.rv[]; (.login | is_human) and .state == "APPROVED" and .at >= $t))] | length)}')"
   emit "l.pr_review_stats_window" "$L_ROUTE: review stats" "$GH_LIMIT" "$L_PR_STATS_JSON"
   emit "l.pr_authors_window" "$L_ROUTE: authors" "$GH_LIMIT" "$L_PR_AUTHORS_JSON"
+  emit "l.ai_pr_stats_window" "$L_ROUTE: AI-authored / AI-reviewed / human-approved-after-AI-review PRs" "$GH_LIMIT" "$L_AI_STATS_JSON"
 else
   L_FAILURE_REASON="$(gh_failure_reason)"
   emit_gh_failure "l.pr_review_stats_window" "gh pr list / gh api: merged PR review stats in window" "$GH_LIMIT" "$L_FAILURE_REASON"
   emit_gh_failure "l.pr_authors_window" "gh pr list / gh api: merged PR authors in window" "$GH_LIMIT" "$L_FAILURE_REASON"
+  emit_gh_failure "l.ai_pr_stats_window" "gh pr list / gh api: AI involvement in merged PRs in window" "$GH_LIMIT" "$L_FAILURE_REASON"
 fi
 
 # 単独メンテナか：bot を除いたコミット著者（名寄せ後）が 1 名以下なら true。
@@ -668,13 +826,17 @@ label_key "m.user_research_labels_count" "gh issue list labels matching user res
 # ---------------------------------------------------------------------------
 DOC_TARGETS="${DOC_DIRS:-docs}"
 RETRO_DOC_PTN="${RETRO_DOC_REGEX:-ふりかえり|振り返り|retrospect|postmortem}"
-# shellcheck disable=SC2086
-N_RETRO_DOCS="$(existing_paths $DOC_TARGETS | tr '\n' '\0' | xargs -0 grep -rliE --exclude="$SELF_NAME" --exclude="$TEMPLATE_NAME" -- "$RETRO_DOC_PTN" /dev/null 2>/dev/null | wc -l | tr -d ' ')"
-emit "n.retro_docs_count" "grep retro docs in DOC_DIRS ($DOC_TARGETS)" "" "$(json_int "$N_RETRO_DOCS")"
+DOC_TRACKED=()
+for d in $DOC_TARGETS; do tracked "$d" && DOC_TRACKED+=("$d"); done
+N_RETRO_DOCS=0
+if [ ${#DOC_TRACKED[@]} -gt 0 ]; then
+  N_RETRO_DOCS="$(git grep -liE -e "$RETRO_DOC_PTN" -- "${DOC_TRACKED[@]}" "${SELF_EXCLUDES[@]}" 2>/dev/null | wc -l | tr -d ' ')"
+fi
+emit "n.retro_docs_count" "git grep retro docs in DOC_DIRS ($DOC_TARGETS)" "" "$(json_int "$N_RETRO_DOCS")"
 
 CHANGELOG_TARGET="${CHANGELOG_FILE:-CHANGELOG.md}"
 N_CHANGELOG_LINES="0"
-[ -f "$CHANGELOG_TARGET" ] && N_CHANGELOG_LINES="$(wc -l < "$CHANGELOG_TARGET" | tr -d ' ')"
+tracked "$CHANGELOG_TARGET" && [ -f "$CHANGELOG_TARGET" ] && N_CHANGELOG_LINES="$(wc -l < "$CHANGELOG_TARGET" | tr -d ' ')"
 emit "n.changelog_lines" "wc -l $CHANGELOG_TARGET" "" "$(json_int "$N_CHANGELOG_LINES")"
 
 RETRO_PR_SEARCH_PTN="${RETRO_PR_SEARCH:-retro OR retrospective OR postmortem OR ふりかえり OR 振り返り in:title}"
@@ -685,12 +847,16 @@ gh_int_key "n.retro_prs_window_count" "gh api search/issues q='type:pr is:merged
 # O. 価値計測
 # ---------------------------------------------------------------------------
 VAL_PTN="${VALUE_METRIC_REGEX:-lead time|リードタイム|サイクルタイム|cycle time|throughput|スループット|dora|deployment frequency|change failure rate|mttr}"
-# shellcheck disable=SC2086
-O_VALUE_MENTIONS="$(existing_paths $DOC_TARGETS | tr '\n' '\0' | xargs -0 grep -rnEi --include='*.md' --exclude="$SELF_NAME" --exclude="$TEMPLATE_NAME" -- "$VAL_PTN" /dev/null 2>/dev/null | wc -l | tr -d ' ')"
-emit "o.value_metric_mentions_count" "grep value metrics mentions in DOC_DIRS ($DOC_TARGETS)" "" "$(json_int "$O_VALUE_MENTIONS")"
+O_VALUE_MENTIONS=0
+if [ ${#DOC_TRACKED[@]} -gt 0 ]; then
+  # Markdown だけを数える（git grep -n の出力は「パス:行番号:本文」）
+  O_VALUE_MENTIONS="$(git grep -nEi -e "$VAL_PTN" -- "${DOC_TRACKED[@]}" "${SELF_EXCLUDES[@]}" 2>/dev/null | grep -cE '^[^:]*\.md:[0-9]+:' || true)"
+fi
+emit "o.value_metric_mentions_count" "git grep value metrics mentions in DOC_DIRS ($DOC_TARGETS)" "" "$(json_int "$O_VALUE_MENTIONS")"
 
 QUANT_PTN="${QUANTITATIVE_IMPACT_REGEX:-[0-9]+(\.[0-9]+)? ?(%|ms|sec|min|秒|分)|短縮|削減|speedup|faster|reduction}"
-O_MEASUREMENT_LINES="$(grep -cEi -- "$QUANT_PTN" "$CHANGELOG_TARGET" 2>/dev/null || true)"
+O_MEASUREMENT_LINES="0"
+tracked "$CHANGELOG_TARGET" && O_MEASUREMENT_LINES="$(grep -cEi -- "$QUANT_PTN" "$CHANGELOG_TARGET" 2>/dev/null || true)"
 emit "o.changelog_measurement_lines_count" "grep quantitative impact in changelog" "" "$(json_int "$O_MEASUREMENT_LINES")"
 
 # ---------------------------------------------------------------------------
@@ -708,29 +874,52 @@ emit "p.adr_recent_count_window" "git log: ADR files changed in window (excludin
 # ---------------------------------------------------------------------------
 EVIDENCE_JSON="$(jq -s 'reduce .[] as $item ({}; . + $item)' "$TMP_JSONL")"
 
+# 設定ブロックの値（空文字は「既定値を使った」）。これと skill_version があれば同じスクリプトを再生成できる
+CONFIG_JSON="$(for n in $CONFIG_VARS; do printf '%s\t%s\n' "$n" "${!n}"; done | \
+  jq -R -s 'split("\n") | map(select(length > 0) | split("\t") | {(.[0]): (.[1:] | join("\t"))}) | add // {}')"
+
 jq -n \
   --arg repo "$REPO_NWO" \
   --arg head "$HEAD_SHA" \
+  --arg branch "$CURRENT_BRANCH" \
+  --arg default_branch "$DEFAULT_BRANCH" \
+  --argjson behind_default "$BEHIND_DEFAULT" \
+  --argjson is_default_branch "$IS_DEFAULT_BRANCH" \
+  --arg last_fetch_at "$LAST_FETCH_AT" \
+  --argjson uncommitted_changes "$UNCOMMITTED_CHANGES" \
   --arg assessed_at "$ASSESSED_DATE" \
   --arg criteria_version "$CRITERIA_VERSION" \
   --arg skill_version "$SKILL_VERSION" \
+  --arg framework_checked_at "$FRAMEWORK_CHECKED_AT" \
   --arg window_start "$WINDOW_START" \
   --arg window_end "$WINDOW_END" \
   --argjson window_days "$WINDOW_DAYS" \
-  --argjson authors_top5 "$AUTHORS_TOP5_JSON" \
   --arg last_commit_date "$LAST_COMMIT_DATE" \
+  --argjson authors_top5 "$AUTHORS_TOP5_JSON" \
   --argjson single_author "$SINGLE_AUTHOR" \
   --argjson single_author_basis "$SINGLE_AUTHOR_BASIS" \
   --argjson authors_anonymized "$(json_bool "$ANONYMIZE_AUTHORS")" \
   --argjson gh_available "$(json_bool "$GH_AVAILABLE")" \
+  --argjson config "$CONFIG_JSON" \
   --argjson evidence "$EVIDENCE_JSON" \
-  '{
+  'def nz: if . == "" then null else . end;
+  {
     header: {
       repository: $repo,
       head_sha: $head,
+      evaluated_ref: {
+        branch: ($branch | nz),
+        sha: $head,
+        default_branch: ($default_branch | nz),
+        is_default_branch: $is_default_branch,
+        behind_default: $behind_default,
+        last_fetch_at: ($last_fetch_at | nz),
+        uncommitted_changes: $uncommitted_changes
+      },
       assessed_at: $assessed_at,
       criteria_version: $criteria_version,
       skill_version: $skill_version,
+      framework_checked_at: ($framework_checked_at | nz),
       window: {start: $window_start, end: $window_end, days: $window_days},
       last_commit_date: $last_commit_date,
       authors_top5: $authors_top5,
@@ -738,10 +927,24 @@ jq -n \
       single_author_basis: $single_author_basis,
       authors_anonymized: $authors_anonymized,
       gh_available: $gh_available,
-      collection_errors: [$evidence | to_entries[] | select(.value.error != null) | .key]
+      collection_errors: [$evidence | to_entries[] | select(.value.error != null) | .key],
+      config: $config
     },
     evidence: $evidence
   }'
+
+# 評価したコミットが既定ブランチの最新と違えば、標準エラーに知らせる（出力 JSON は壊さない）
+{
+  if [ "$BEHIND_DEFAULT" != "null" ] && [ "$BEHIND_DEFAULT" -gt 0 ]; then
+    echo "警告: HEAD は origin/$DEFAULT_BRANCH より $BEHIND_DEFAULT コミット遅れています（最終 fetch: ${LAST_FETCH_AT:-不明}）。最新を評価するなら fetch してから origin/$DEFAULT_BRANCH を別の worktree に取り出して実行してください。"
+  fi
+  if [ "$IS_DEFAULT_BRANCH" = "false" ]; then
+    echo "警告: 評価したのは既定ブランチ（${DEFAULT_BRANCH}）ではなく ${CURRENT_BRANCH:-detached HEAD} です。"
+  fi
+  if [ "$UNCOMMITTED_CHANGES" = "true" ]; then
+    echo "警告: 追跡されているファイルに未コミットの変更があります。ファイルの中身は作業ツリーの内容で数えています。"
+  fi
+} >&2
 
 # 取得できなかったキーがあれば、標準エラーに一覧を出す（出力 JSON は壊さない）
 COLLECTION_ERRORS="$(printf '%s' "$EVIDENCE_JSON" | jq -r 'to_entries[] | select(.value.error != null) | "\(.key): \(.value.error)"')"

@@ -2,6 +2,56 @@
 
 このプロジェクトは [Semantic Versioning](https://semver.org/lang/ja/) に従います。スキル本体と判定基準シートは 1 つの版番号を共有します。`criteria.md` の判定基準を変えたときは、以前の採点と比較できなくなるので、少なくともマイナーバージョンを上げます。patch だけが違う版どうしの採点は比較できます。
 
+## [0.3.0] - 2026-09-25
+
+private の大規模モノレポ（Java / Kotlin、`gh` なし、書き込みなし、Claude（Cowork）のクラウドセッション）での利用者フィードバック（[kemsakurai/scrum-guides#2234](https://github.com/kemsakurai/scrum-guides/issues/2234)）に対応しました。`criteria.md` に外部運用の申告と、B・H のレベル 1〜2 の充足例を加えたので、minor バージョンを上げました。各レベルの行の文言は変えていませんが、B のレベル 1 は充足例によって判定が厳しくなります（下の「判定基準」）。0.2.x の採点と比べるときは、B のスコアと、下の「証拠の値が変わるキー」の影響を確かめてください。
+
+### 判定基準（`criteria.md`）
+
+- 「外部運用の申告」を加えた。GitHub の外で運用していると申告された項目は、スコアを変えずに採点表の「外部運用」列に `申告あり` と出どころを書き、「本当に無い 0」と「外にあるので見えない 0」を区別する。
+- B（要件定義）と H（データ管理）に、レベル 1〜2 の充足例と非充足例を加えた（H はリポジトリの種類ごと）。境界的なときは低い方を採り、理由を書く。
+- **採点ルールの変更（B のレベル 1）**：Issue テンプレートがあっても、AI に要件を渡すことを想定した形跡が無ければ 1 にしない（テンプレートの存在だけでは 1 にしない）と明記した。0.2.x でテンプレートの存在だけを根拠に B を 1 としていた採点は、0.3.0 では 0 になりうる。再評価で B が下がったときは、この変更によるものか、実態の変化によるものかを分けて書く。
+
+### 修正
+
+- ファイルの有無と中身を、git で追跡されているファイルだけで判定するようにした。0.2.x は作業ツリーを見ていたので、ローカルにしかない未追跡の指示書などを「存在する」と数えていた。
+- PR テンプレート・Issue テンプレートを、GitHub が使う 3 か所（ルート・`docs/`・`.github/`）で、ファイル名の大文字小文字を問わずに探すようにした。0.2.x は `.github/` しか見ておらず、ルートのテンプレートを見落としていた。
+
+### 追加
+
+- 出力 JSON のヘッダーに、`evaluated_ref`（評価したブランチ・コミット、既定ブランチとその遅れ、最終 fetch 日時、未コミットの変更の有無）、`framework_checked_at`（上流フレームワークとの差分を確認した日。`--framework-checked-at` で渡す）、`config`（設定ブロックに埋めた値）を加えた。既定ブランチから遅れている、既定ブランチ以外を評価している、未コミットの変更があるときは、標準エラーに警告を出す。
+- 証拠キーを 6 つ加えた（44 → 50）。
+  - `a.rule_files_count`：識別子付きのルールファイル（Cursor の `.mdc`、Copilot のパス別指示書など）の数
+  - `a.rule_change_commits_window`：窓内に指示書・ルール・ルール履歴のパスを変えた既定ブランチのコミットの数。`.claude`・`.agents` 等はディレクトリごと対象なので、スキルや設定ファイルだけを変えたコミットも数える。ラベルや Issue フォームは見ない（ラベルで管理している運用は、`references/evidence-keys.md` の検索クエリで件数を添える）
+  - `i.agent_hooks_count`・`i.agent_permission_denies_count`：Claude Code / Gemini CLI の `settings.json` の `hooks` と、`permissions.deny` のルール数
+  - `k.coauthored_ratio_window`：窓内の、マージコミットを除いたコミットに限った AI 関与率（全履歴の `k.coauthored_ratio_lower_bound` は、歴史の長いリポジトリで極端に小さく出る）
+  - `l.ai_pr_stats_window`：窓内にマージされた PR のうち、AI エージェントが作った件数、AI のレビュアーが付いた件数、AI のレビューの後に人が承認した件数
+- 設定ブロックに `RULE_FILES_REGEX`・`AI_REVIEWER_REGEX`・`AI_AGENT_LOGIN_REGEX` を加えた。
+- `a.skills_count` の探索対象に `.github/skills` を、テストファイルの既定の命名に `*Test.kt` を、カバレッジ下限の既定の探索に `build.gradle(.kts)` / `pom.xml` と JaCoCo の `jacocoTestCoverageVerification`・`violationRules`、Kover の `koverVerify` を加えた。
+- `templates/report.template.md`（レポートの雛形）を加えた。項目別の表に「外部運用」列がある。
+- `references/evidence-keys.md`：`gh` を使えない環境で GitHub MCP や検索 API で補完するときの、キーごとのクエリ集を加えた（件数は 1 ページ 1 件で取り `total_count` を読む）。近似した値に付ける `"approximation": "<方法>"` の規約を加えた。
+- `SKILL.md`：
+  - 実行前に既定ブランチとのずれを確かめ、最新を評価するときは一時的な worktree に取り出す手順
+  - 「書き込みなしモード」（スクリプトを対象リポジトリの外に生成し、指示書にも GitHub にも書き込まない）
+  - ベースラインをファイル（`assessment-<評価日>.json` / `.md`）に保存する方法と、`再評価 <パス>` での再評価
+  - Actions の実行結果を取れないときの、運用の証拠の強さの順位（実行結果 > PR のステータス > ワークフローの定義）
+  - スキャフォールドのときに見直すべき既定値（デプロイ系ワークフローの `release` など）
+  - フレームワークの差分確認の日を `--framework-checked-at` で記録する手順
+- README：インストールせずに使う方法（clone して `SKILL.md` を読ませる）を加えた。
+- テスト：未追跡のファイルを数えないこと、ルートの PR テンプレート、新しい 6 キー、`evaluated_ref`（遅れ・別ブランチの警告を含む）、`framework_checked_at`、`config`、壊れた `settings.json` のケースを加えた。
+
+### 変更
+
+- `docs/example-report.md` の項目別の表に「外部運用」列を加えた。
+- `tests/template_test.sh` の実行権限を戻した（0.2.0 で外れていた）。
+
+### 証拠の値が変わるキー
+
+- 未追跡のファイルに依存していたキー（`a.*`、`b.*_template_exists`、`c.arch_lint_*`、`e.*`、`f.smoke_steps`・`f.rollback_doc_present`、`g.monitoring_configured`、`h.data_integrity_gate_configured`、`i.*`、`j.*`、`n.retro_docs_count`・`n.changelog_lines`、`o.*`）は、未追跡のファイルがあるリポジトリで値が下がることがある。
+- `b.pr_template_exists`・`b.issue_template_exists`：テンプレートをルートや `docs/` に置いているリポジトリで `false` から `true` になる。
+- `a.skills_count`・`e.test_files_count`・`e.test_cases_count`・`e.coverage_gate_configured`：`.github/skills`、Kotlin のテスト、JVM のカバレッジ下限があるリポジトリで値が増える。
+- 実在する 2 つのリポジトリ（kemsakurai/action-pmd、kemsakurai/scrum-guides）では、既存の 44 キーの値は 0.2.0 と同じだった。新しいキーの値は、たとえば scrum-guides で `k.coauthored_ratio_window` が 0.68（全履歴の `k.coauthored_ratio_lower_bound` は 0.648）、`a.rule_change_commits_window` が 223、`i.agent_hooks_count` が 6。
+
 ## [0.2.0] - 2026-09-25
 
 kemsakurai/action-pmd でのドッグフーディング（Claude Code on the web で実行）で見つかった問題を直しました。`criteria.md` に N/A の規定を加えたので、minor バージョンを上げました。各レベルの判定基準の文言は変えていません。0.1.x の採点と比べるときは、N/A にした項目を除いたうえで、下の「証拠の値が変わるキー」の影響を確かめてください。
