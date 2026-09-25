@@ -23,6 +23,10 @@
 # =============================================================================
 set -u
 
+# git が ASCII 以外のパス（日本語のファイル名など）を "\350\252..." のように引用符付きで出力しないようにする
+# （git の既定は core.quotePath=true で、そのままだと ls-files / grep の出力とパスの照合が一致しない）
+git() { command git -c core.quotePath=false "$@"; }
+
 CRITERIA_VERSION="0.3.0"
 SKILL_VERSION="0.3.0"
 # このスクリプト自身とテンプレートは、設定ファイルの grep の対象から外す（自分の本文にある検索語に一致しないように）
@@ -189,8 +193,16 @@ if [ -z "$DEFAULT_BRANCH" ]; then
   done
 fi
 BEHIND_DEFAULT="null"
-if [ -n "$DEFAULT_BRANCH" ] && git rev-parse -q --verify "refs/remotes/origin/$DEFAULT_BRANCH" >/dev/null; then
+# 既定ブランチを評価しているか：ブランチ名が同じか、HEAD が origin/<既定ブランチ> と同じコミットなら true
+# （origin/<既定ブランチ> を git worktree add で取り出すと detached HEAD になり、ブランチ名は空になるため）
+IS_DEFAULT_BRANCH="null"
+if [ -n "$DEFAULT_BRANCH" ]; then
+  IS_DEFAULT_BRANCH="false"
+  [ "$CURRENT_BRANCH" = "$DEFAULT_BRANCH" ] && IS_DEFAULT_BRANCH="true"
+fi
+if [ -n "$DEFAULT_BRANCH" ] && DEFAULT_SHA="$(git rev-parse -q --verify "refs/remotes/origin/$DEFAULT_BRANCH")"; then
   BEHIND_DEFAULT="$(git rev-list --count "HEAD..refs/remotes/origin/$DEFAULT_BRANCH")"
+  [ "$DEFAULT_SHA" = "$HEAD_SHA" ] && IS_DEFAULT_BRANCH="true"
 fi
 FETCH_EPOCH="$(file_mtime_epoch "$(git rev-parse --git-path FETCH_HEAD)")"
 LAST_FETCH_AT=""
@@ -412,10 +424,16 @@ done
 A_FILES_JSON="$(printf '%s\n' "${A_FILES[@]:-}" | lines_to_array)"
 emit "a.agent_instruction_files" "git ls-files $AGENT_INSTRUCTION_PATHS" "" "$A_FILES_JSON"
 
-# スキルはディレクトリ（またはその symlink）単位で数え、同名は 1 つにまとめる
+# スキルはディレクトリ（またはその symlink）単位で数え、同名は 1 つにまとめる。
+# 直下の通常ファイル（README.md、.gitkeep 等）は数えない。git ls-files -s の 1 列目が 120000 なら symlink
 SKILL_DIRS=".agents/skills .claude/skills .github/skills skills"
 A_SKILLS_COUNT="$(for d in $SKILL_DIRS; do
-    git ls-files -- "$d" | awk -v d="$d/" 'index($0, d) == 1 { r = substr($0, length(d) + 1); sub(/\/.*/, "", r); print r }'
+    git ls-files -s -- "$d" | awk -v d="$d/" '{
+      mode = $1; path = $0; sub(/^[^\t]*\t/, "", path)
+      if (index(path, d) != 1) next
+      r = substr(path, length(d) + 1)
+      if (r ~ /\//) { sub(/\/.*/, "", r); print r } else if (mode == "120000") print r
+    }'
   done | sort -u | grep -c . || true)"
 emit "a.skills_count" "git ls-files $SKILL_DIRS: distinct first-level entries" "" "$(json_int "$A_SKILLS_COUNT")"
 
@@ -856,6 +874,7 @@ jq -n \
   --arg branch "$CURRENT_BRANCH" \
   --arg default_branch "$DEFAULT_BRANCH" \
   --argjson behind_default "$BEHIND_DEFAULT" \
+  --argjson is_default_branch "$IS_DEFAULT_BRANCH" \
   --arg last_fetch_at "$LAST_FETCH_AT" \
   --argjson uncommitted_changes "$UNCOMMITTED_CHANGES" \
   --arg assessed_at "$ASSESSED_DATE" \
@@ -882,7 +901,7 @@ jq -n \
         branch: ($branch | nz),
         sha: $head,
         default_branch: ($default_branch | nz),
-        is_default_branch: (if $default_branch == "" then null else $branch == $default_branch end),
+        is_default_branch: $is_default_branch,
         behind_default: $behind_default,
         last_fetch_at: ($last_fetch_at | nz),
         uncommitted_changes: $uncommitted_changes
@@ -909,7 +928,7 @@ jq -n \
   if [ "$BEHIND_DEFAULT" != "null" ] && [ "$BEHIND_DEFAULT" -gt 0 ]; then
     echo "警告: HEAD は origin/$DEFAULT_BRANCH より $BEHIND_DEFAULT コミット遅れています（最終 fetch: ${LAST_FETCH_AT:-不明}）。最新を評価するなら fetch してから origin/$DEFAULT_BRANCH を別の worktree に取り出して実行してください。"
   fi
-  if [ -n "$DEFAULT_BRANCH" ] && [ "$CURRENT_BRANCH" != "$DEFAULT_BRANCH" ]; then
+  if [ "$IS_DEFAULT_BRANCH" = "false" ]; then
     echo "警告: 評価したのは既定ブランチ（${DEFAULT_BRANCH}）ではなく ${CURRENT_BRANCH:-detached HEAD} です。"
   fi
   if [ "$UNCOMMITTED_CHANGES" = "true" ]; then

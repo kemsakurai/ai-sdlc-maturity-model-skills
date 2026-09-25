@@ -104,6 +104,10 @@ export PATH="$WORK/bin:$PATH"
 export FAKE_GH_COUNTER="$WORK/gh-calls"
 export FAKE_GH_LOG="$WORK/gh-log"
 export GH_RETRY_SLEEP=0
+# 手元の git 設定（core.quotePath=false など）に左右されないよう、グローバル・システムの設定を読まない
+: > "$WORK/gitconfig"
+export GIT_CONFIG_GLOBAL="$WORK/gitconfig"
+export GIT_CONFIG_NOSYSTEM=1
 
 # reset_gh : 偽の gh の呼び出し回数と記録を消す
 reset_gh() { rm -f "$FAKE_GH_COUNTER" "$FAKE_GH_LOG"; }
@@ -143,6 +147,13 @@ mkdir -p "$REPO"
   # GitHub Copilot のパス別指示書・スキルと Cursor のルール（AGENTS.md 等は無い）
   printf -- '---\napplyTo: "**"\n---\nDo not commit secrets.\n' > .github/instructions/x.instructions.md
   printf -- '---\nname: review\n---\n' > .github/skills/review/SKILL.md
+  # スキル置き場の直下の通常ファイルはスキルとして数えない。symlink のスキルは数える
+  printf '# skills\n' > .github/skills/README.md
+  mkdir -p .agents/skills
+  ln -s ../../.github/skills/review .agents/skills/linked
+  # 日本語のファイル名（git の既定の core.quotePath=true では引用符付きで出力される）
+  printf 'e\n' > docs/adr/0004-認証方式.md
+  printf 'リードタイム: lead time を週次で追う\n' > docs/メトリクス.md
   printf -- '---\ndescription: r1\n---\n' > .cursor/rules/r1.mdc
   # Claude Code の設定：hooks 2 件（イベント 2 種）と権限の拒否ルール 3 件
   printf '%s\n' '{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"a"}]}],"Stop":[{"hooks":[{"type":"command","command":"b"}]}]},"permissions":{"deny":["Read(.env)","Read(**/secrets/**)","Bash(rm -rf:*)"]}}' > .claude/settings.json
@@ -200,7 +211,8 @@ for v in default example; do
   if only_warnings "$WORK/$v.err"; then pass "$v: stderr は警告だけ"; else fail "$v: stderr は警告だけ"; sed 's/^/     /' "$WORK/$v.err"; fi
   check "${v}: 証拠キーが $N_KEYS 個"            "$OUT" ".evidence | length == $N_KEYS"
   check "$v: header の版がそろっている"         "$OUT" '.header.skill_version == .header.criteria_version'
-  check "$v: c.adr_count は索引・テンプレートを除く" "$OUT" '.evidence["c.adr_count"].value == 4'
+  check "$v: c.adr_count は索引・テンプレートを除き、日本語名も数える" "$OUT" '.evidence["c.adr_count"].value == 5'
+  check "$v: 日本語名の文書を o.value_metric_mentions_count で数える" "$OUT" '.evidence["o.value_metric_mentions_count"].value == 1'
   check "$v: c.adr_duplicates は番号 3 だけ"     "$OUT" '.evidence["c.adr_duplicates"].value == ["3"]'
   check "$v: c.arch_lint_enforced（pre-commit のみ）" "$OUT" '.evidence["c.arch_lint_enforced"].value == true'
   check "$v: h.data_integrity_gate_configured"  "$OUT" '.evidence["h.data_integrity_gate_configured"].value == true'
@@ -225,7 +237,7 @@ for v in default example; do
   check "$v: framework_checked_at は指定が無ければ null" "$OUT" '.header.framework_checked_at == null'
   check "$v: Copilot のパス別指示書を A で検出"  "$OUT" '.evidence["a.agent_instruction_files"].value | index(".github/instructions") != null'
   check "$v: 未追跡の AGENTS.md は数えない"      "$OUT" '.evidence["a.agent_instruction_files"].value | index("AGENTS.md") == null'
-  check "$v: a.skills_count に .github/skills を含む" "$OUT" '.evidence["a.skills_count"].value == 1'
+  check "$v: a.skills_count（.github/skills のディレクトリと symlink。README は数えない）" "$OUT" '.evidence["a.skills_count"].value == 2'
   check "$v: a.rule_files_count（.mdc と .instructions.md）" "$OUT" '.evidence["a.rule_files_count"].value == 2'
   check "$v: a.rule_change_commits_window"      "$OUT" '.evidence["a.rule_change_commits_window"].value == 1'
   check "$v: ルート直下の PR テンプレートを検出"  "$OUT" '.evidence["b.pr_template_exists"].value == true and .evidence["b.issue_template_exists"].value == false'
@@ -263,6 +275,13 @@ OUT="$WORK/behind.json"
 FAKE_GH_MODE=unauth bash "$WORK/default.sh" "$REPO" > "$OUT" 2> "$WORK/behind.err"
 check "遅れ: behind_default が 1"       "$OUT" '.header.evaluated_ref.default_branch == "main" and .header.evaluated_ref.is_default_branch == true and .header.evaluated_ref.behind_default == 1'
 if grep -q '^警告: HEAD は origin/main より 1 コミット遅れています' "$WORK/behind.err"; then pass "遅れ: stderr に警告が出る"; else fail "遅れ: stderr に警告が出る"; sed 's/^/     /' "$WORK/behind.err"; fi
+# SKILL.md の手順どおり origin/main を取り出すと detached HEAD になる。それでも既定ブランチとみなす
+git -C "$REPO" checkout -q --detach "$AHEAD_SHA"
+OUT="$WORK/detached.json"
+FAKE_GH_MODE=unauth bash "$WORK/default.sh" "$REPO" > "$OUT" 2> "$WORK/detached.err"
+check "detached HEAD（origin/main と同じ）: 既定ブランチとみなす" "$OUT" '.header.evaluated_ref.branch == null and .header.evaluated_ref.is_default_branch == true and .header.evaluated_ref.behind_default == 0'
+if grep -q '既定ブランチ' "$WORK/detached.err"; then fail "detached HEAD（origin/main と同じ）: 警告を出さない"; sed 's/^/     /' "$WORK/detached.err"; else pass "detached HEAD（origin/main と同じ）: 警告を出さない"; fi
+git -C "$REPO" checkout -q main
 git -C "$REPO" checkout -q -b feature
 OUT="$WORK/feature.json"
 FAKE_GH_MODE=unauth bash "$WORK/default.sh" "$REPO" > "$OUT" 2> "$WORK/feature.err"
@@ -369,7 +388,9 @@ for v in default scripts-dirs; do
   OUT="$WORK/self-$v.json"
   FAKE_GH_MODE=unauth bash "$REPO/scripts/ai-sdlc/collect-evidence.sh" "$REPO" > "$OUT" 2>/dev/null
   check "自分自身（${v}）: g.monitoring_configured が false" "$OUT" '.evidence["g.monitoring_configured"].value == false'
-  check "自分自身（${v}）: ドキュメントの検索にも一致しない" "$OUT" '.evidence["n.retro_docs_count"].value == 0 and .evidence["o.value_metric_mentions_count"].value == 0'
+  # default は docs/メトリクス.md の 1 行だけ。scripts-dirs は scripts だけを探すので 0
+  EXPECTED_VALUE_MENTIONS=1; [ "$v" = "scripts-dirs" ] && EXPECTED_VALUE_MENTIONS=0
+  check "自分自身（${v}）: ドキュメントの検索にも一致しない" "$OUT" ".evidence[\"n.retro_docs_count\"].value == 0 and .evidence[\"o.value_metric_mentions_count\"].value == $EXPECTED_VALUE_MENTIONS"
 done
 # 自分自身を除いても、ほかの追跡されているファイルの監視設定は検出する（既定値の scripts でも検出する）
 printf '#!/bin/sh\ncurl -fsS https://example.com/healthcheck\n' > "$REPO/scripts/probe.sh"
