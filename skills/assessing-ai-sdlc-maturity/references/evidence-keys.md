@@ -12,11 +12,13 @@
     "repository": "owner/name",
     "head_sha": "…",
     "assessed_at": "YYYY-MM-DD",
-    "criteria_version": "0.1.2",
-    "skill_version": "0.1.2",
+    "criteria_version": "0.2.0",
+    "skill_version": "0.2.0",
     "window": {"start": "YYYY-MM-DD", "end": "YYYY-MM-DD", "days": 90},
+    "last_commit_date": "YYYY-MM-DD",
     "authors_top5": [{"author": "…", "count": 0}],
     "single_author": false,
+    "single_author_basis": null,
     "authors_anonymized": false,
     "gh_available": true,
     "collection_errors": []
@@ -29,15 +31,22 @@
 
 - `value`：採点と受け入れ基準に使う値
 - `command`：値を出したコマンドの要約
-- `limit`：`gh` の取得件数の上限。値がこの上限に張り付いているときは、実数がもっと多い可能性がある
-- `single_author`：コミット著者が 1 名なら `true`。`criteria.md` の N/A 注記を当てるかどうかの判断に使う
+- `limit`：`gh` の取得件数の上限。値がこの上限に張り付いているときは、実数がもっと多い可能性がある。検索 API の `total_count` で数えるキーは上限が無いので `null`
+- `note`：`gh` の失敗以外の理由で値が 0 や `null` になったときの理由（例：集計期間にコミットが無い）。無いときはキーごと出さない
+- `last_commit_date`：最後のコミットの日付。集計期間の開始日より前なら、`_window` のキーは休眠中のため 0 や `null` になる
+- `single_author`：単独メンテナなら `true`。bot を除いたコミット著者（`.mailmap` で名寄せした後の名前）が 1 名以下か、集計期間にマージされた PR の作成者（bot を除く）が 1 名なら `true`。`criteria.md` の N/A 注記を当てるかどうかの判断に使う
+- `single_author_basis`：`single_author` が `true` になった根拠。`"commit_authors"`（コミット著者）、`"pr_authors"`（PR の作成者）、`false` のときは `null`
 - `authors_anonymized`：`--anonymize-authors` を付けて実行したなら `true`。このとき `header.authors_top5` と `l.pr_authors_window` の名前は `author-1`・`pr-author-1` のような仮の名前になる（bot は除く）。件数や順位は変わらない
 - `gh_available`：実行の最初の確認で `gh` を使えたなら `true`。`false` のときは、GitHub から取るキーがすべて取得できていない
 - `collection_errors`：取得できなかったキーの一覧。空でなければ、該当するキーを採点に使う前に再実行する
 
 ## 取得できなかったキー
 
-GitHub から取るキー（`b.issues_*`、`f.deploy_runs`、`g.incident_labeled_issues_count`、`h.data_management_labels_count`、`l.*`、`m.*`、`n.retro_prs_window_count`、`p.roadmap_label_count`）は、`gh` が失敗すると取得できない。スクリプトは一時的な失敗（ネットワーク、API の 5xx、レート制限など）に備えて `GH_RETRY_MAX` 回（既定 3）まで試す。未認証・リモートが無い・HTTP 401/404 のように再試行しても直らない失敗は、すぐにあきらめる。
+GitHub から取るキー（`b.issues_*`、`f.deploy_runs`、`g.incident_labeled_issues_count`、`h.data_management_labels_count`、`l.*`、`m.*`、`n.retro_prs_window_count`、`p.roadmap_label_count`）は、`gh` が失敗すると取得できない。スクリプトは一時的な失敗（ネットワーク、API の 5xx、レート制限など）に備えて `GH_RETRY_MAX` 回（既定 3）まで試す。未認証・リモートが無い・HTTP 401/403/404 のように再試行しても直らない失敗は、すぐにあきらめる（HTTP 403 でもレート制限なら再試行する）。
+
+GitHub からの取得は REST API（`gh api`、`gh run list`）で行うので、GraphQL API が使えない環境（Claude Code on the web 等）でも取得できる。GraphQL を使うのは `l.*` の PR 一覧だけで、失敗したら REST API（検索 API と PR ごとの API）で取り直す。どちらで取ったかは `l.*` の `command` に入る。bot のログインは、どちらの経路でも `app/<name>` の表記にそろえる。
+
+`gh` を使えない環境で、GitHub MCP のツールや `curl` で値を補完したキーには `"supplemented": true` を付け、`command` を実際に使った手段に置き換える（`SKILL.md` の手順 2）。
 
 それでも取得できなかったキーは次の形で記録する。値を `0` や `{}` にすると「実態が 0」と読み違えるので、`null` にする。
 
@@ -69,7 +78,7 @@ GitHub から取るキー（`b.issues_*`、`f.deploy_runs`、`g.incident_labeled
 | `ARCH_LINT_CONFIG_FILES`, `ARCH_LINT_ENFORCE_PATTERN` | `c.arch_lint_*` | import-linter / dependency-cruiser / ArchUnit |
 | `ENFORCEMENT_FILES` | `c.arch_lint_enforced`, `e.coverage_gate_configured`, `h.data_integrity_gate_configured` | pre-commit / husky / lefthook / Taskfile / Makefile / justfile / package.json / `.github/workflows` |
 | `DEPLOY_WORKFLOW_REGEX`, `ROLLBACK_DOC_FILES` | `f.*` | ワークフロー名に deploy / release / publish を含むもの |
-| `MONITORING_PATTERNS`, `MONITORING_DIRS` | `g.monitoring_configured` | 監視ツール名を、ワークフロー・インフラ定義・スクリプトから探す |
+| `MONITORING_PATTERNS`, `MONITORING_DIRS` | `g.monitoring_configured` | 監視ツール名を、ワークフロー・インフラ定義・スクリプトから探す（証拠収集スクリプト自身とテンプレートは除く） |
 | `DATA_LABELS_REGEX`, `DATA_GATE_PATTERN` | `h.*` | dataset / schema / migration / etl 等 |
 | `USER_RESEARCH_REGEX` | `m.*` | persona / user-research / usability 等 |
 | `RETRO_DOC_REGEX`, `RETRO_PR_SEARCH` | `n.retro_*` | ふりかえり / retrospective / postmortem |
@@ -82,7 +91,7 @@ GitHub から取るキー（`b.issues_*`、`f.deploy_runs`、`g.incident_labeled
 
 | キー | 数えるもの | 目安 |
 | --- | --- | --- |
-| `a.agent_instruction_files` | `AGENTS.md` / `CLAUDE.md` / `GEMINI.md` / `.agents` / `.claude` / `.cursor` / `.github/copilot-instructions.md` のうち存在するもの | あればレベル 2 の候補 |
+| `a.agent_instruction_files` | `AGENTS.md` / `CLAUDE.md` / `GEMINI.md` / `.agents` / `.claude` / `.cursor` / `.github/copilot-instructions.md` / `.github/instructions`（Copilot のパス別指示書）/ `.github/prompts` / `.github/chatmodes` / `.windsurfrules` / `.clinerules` / `CONVENTIONS.md` のうち存在するもの | あればレベル 2 の候補 |
 | `a.skills_count` | `.agents/skills` / `.claude/skills` / `skills` 直下のディレクトリ（symlink 含む）の数。同名はまとめて 1 | スキルとして体系化されていればレベル 3 の候補 |
 | `a.rule_history_doc_present` | ルール変更の根拠履歴（`RULE_HISTORY_FILES`）の有無 | レベル 3 の候補 |
 
@@ -92,8 +101,8 @@ GitHub から取るキー（`b.issues_*`、`f.deploy_runs`、`g.incident_labeled
 | --- | --- | --- |
 | `b.issue_template_exists` | Issue テンプレートの有無 | レベル 1〜2 |
 | `b.pr_template_exists` | PR テンプレートの有無 | レベル 1〜2 |
-| `b.issues_open_count` | 未完了 Issue 数（上限 500） | 規模の把握 |
-| `b.issues_closed_count` | 完了 Issue 数（上限 1000） | GitHub で要件を管理しているか |
+| `b.issues_open_count` | 未完了 Issue 数（検索 API の `total_count`。上限なし） | 規模の把握 |
+| `b.issues_closed_count` | 完了 Issue 数（検索 API の `total_count`。上限なし） | GitHub で要件を管理しているか |
 
 ## C. システム設計・アーキテクチャ
 
@@ -109,9 +118,9 @@ GitHub から取るキー（`b.issues_*`、`f.deploy_runs`、`g.incident_labeled
 | キー | 数えるもの | 目安 |
 | --- | --- | --- |
 | `d.commit_count_total` | 総コミット数 | 規模の把握 |
-| `d.commits_window` | 窓内のコミット数 | 活動量 |
+| `d.commits_window` | 窓内のコミット数。0 のときは `note` に最後のコミットの日付が入る | 活動量 |
 | `d.commits_by_month` | 直近 12 か月の月別コミット数 | 活動の推移 |
-| `d.pr_commit_ratio_window` | 既定ブランチの first-parent 履歴（窓内）のうち、件名が `(#N)`（squash merge）または `Merge pull request #N`（merge commit）のコミットの割合 | PR を経由する運用の度合い。rebase merge だけの運用では低く出る |
+| `d.pr_commit_ratio_window` | 既定ブランチの first-parent 履歴（窓内）のうち、件名が `(#N)`（squash merge）または `Merge pull request #N`（merge commit）のコミットの割合。窓内にコミットが無ければ `null` で、`note` に理由が入る | PR を経由する運用の度合い。rebase merge だけの運用では低く出る |
 
 ## E. テスト・QA
 
@@ -133,8 +142,8 @@ GitHub から取るキー（`b.issues_*`、`f.deploy_runs`、`g.incident_labeled
 
 | キー | 数えるもの | 目安 |
 | --- | --- | --- |
-| `g.monitoring_configured` | ワークフロー・インフラ定義・スクリプト内の監視ツールへの言及の有無 | 言及だけなので、実際に運用しているかは別に確認する |
-| `g.incident_labeled_issues_count` | 窓内に作られた `incident` / `postmortem` ラベル付き Issue 数（上限 500） | 障害が GitHub に記録されているか |
+| `g.monitoring_configured` | ワークフロー・インフラ定義・スクリプト内の監視ツールへの言及の有無（証拠収集スクリプト自身は除く） | 言及だけなので、実際に運用しているかは別に確認する |
+| `g.incident_labeled_issues_count` | 窓内に作られた `incident` / `postmortem` ラベル付き Issue 数（検索 API の上限 1000 件の中から数える） | 障害が GitHub に記録されているか |
 
 ## H. データ管理
 
@@ -147,14 +156,14 @@ GitHub から取るキー（`b.issues_*`、`f.deploy_runs`、`g.incident_labeled
 
 | キー | 数えるもの | 目安 |
 | --- | --- | --- |
-| `i.tool_integration_files` | AI ツールの共有設定（`.claude/settings.json` / `.cursor` / `.gemini` / `.aider.conf.yml` 等） | レベル 2 |
+| `i.tool_integration_files` | AI ツールの共有設定（`.claude/settings.json` / `.cursor` / `.github/copilot-instructions.md` / `.github/instructions` / `.gemini` / `.aider.conf.yml` / `.windsurfrules` / `.clinerules` 等） | レベル 2 |
 | `i.local_guardrail_hooks_count` | pre-commit の `repo: local` の数 + `.husky` のフックファイル数 + `lefthook.yml` の有無（1） | ガードレールを機械的に強制しているか（レベル 3） |
 
 ## J. AI 利用ポリシーと機械的強制
 
 | キー | 数えるもの | 目安 |
 | --- | --- | --- |
-| `j.governance_docs_present` | ガイドライン文書（`AGENTS.md` / `docs/ai-policy.md` 等）の有無 | レベル 2 |
+| `j.governance_docs_present` | ガイドライン文書（`AGENTS.md` / `CLAUDE.md` / `.github/copilot-instructions.md` / `.github/instructions` / `docs/ai-policy.md` 等）の有無 | レベル 2。中身に AI 利用の制約が書かれているかは人が確かめる |
 | `j.dependabot_or_renovate_present` | 依存関係の自動更新設定の有無 | 自動の準拠チェック（レベル 3）の一部 |
 | `j.codeql_security_workflow_present` | セキュリティ系ワークフロー（CodeQL / Snyk / Trivy / Semgrep 等）の有無 | 同上 |
 
@@ -170,14 +179,14 @@ GitHub から取るキー（`b.issues_*`、`f.deploy_runs`、`g.incident_labeled
 
 | キー | 数えるもの | 目安 |
 | --- | --- | --- |
-| `l.pr_review_stats_window` | 窓内にマージされた PR の件数・レビュー付き件数・コメント付き件数・平均追加行数（上限 500） | レビュー工程に AI の出力を通しているか |
-| `l.pr_authors_window` | 窓内にマージされた PR の著者別の件数（上限 500） | 人間と複数エージェントの関与 |
+| `l.pr_review_stats_window` | 窓内にマージされた PR の件数・レビュー付き件数・コメント付き件数・平均追加行数（上限 500）。GraphQL が使えないときは REST で PR ごとに取るので、PR が多いと時間がかかる | レビュー工程に AI の出力を通しているか |
+| `l.pr_authors_window` | 窓内にマージされた PR の著者別の件数（上限 500）。bot は `app/<name>` | 人間と複数エージェントの関与 |
 
 ## M. 合成ユーザーリサーチ
 
 | キー | 数えるもの | 目安 |
 | --- | --- | --- |
-| `m.user_research_issues_count` | 窓内に作られ、`USER_RESEARCH_REGEX` のキーワードのどれか（GitHub 検索の OR）を含む Issue 数（上限 500） | キーワード検索なので取りこぼしも誤検知もある |
+| `m.user_research_issues_count` | 窓内に作られ、`USER_RESEARCH_REGEX` のキーワードのどれか（GitHub 検索の OR）を含む Issue 数（検索 API の `total_count`） | キーワード検索なので取りこぼしも誤検知もある |
 | `m.user_research_labels_count` | リサーチ系ラベルの延べ数（上限 1000） | 探索を Issue 化しているか |
 
 ## N. 継続的改善のフィードバックループ
@@ -186,7 +195,7 @@ GitHub から取るキー（`b.issues_*`、`f.deploy_runs`、`g.incident_labeled
 | --- | --- | --- |
 | `n.retro_docs_count` | `DOC_DIRS` 内でふりかえり系キーワードを含むファイル数 | レベル 2 |
 | `n.changelog_lines` | `CHANGELOG_FILE` の行数 | 変更を記録しているか |
-| `n.retro_prs_window_count` | 窓内にマージされた、タイトルがふりかえり系の PR 数（上限 500） | 改善が PR として出ているか（レベル 3） |
+| `n.retro_prs_window_count` | 窓内にマージされた、タイトルがふりかえり系の PR 数（検索 API の `total_count`） | 改善が PR として出ているか（レベル 3） |
 
 ## O. 価値計測
 

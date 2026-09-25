@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# 証拠収集スクリプト（読み取り専用、criteria.md 0.1.2 準拠）
+# 証拠収集スクリプト（読み取り専用、criteria.md 0.2.0 準拠）
 # このファイルは assessing-ai-sdlc-maturity スキルによりプロジェクト固有に生成されました。
 # https://github.com/kemsakurai/ai-sdlc-maturity-model-skills
 #
@@ -13,13 +13,18 @@
 # 必要なコマンド: git (2.22 以上), gh (認証済み), jq
 # 環境変数: GH_RETRY_MAX（gh の最大試行回数、既定 3）、GH_RETRY_SLEEP（再試行の基本間隔の秒数、既定 3）
 #
+# GitHub からの取得は REST API（gh api / gh run list）で行う。GraphQL API が使えない環境（Claude Code on the web 等）でも
+# 取得できるようにするため。GraphQL を使うのは l.* の PR 一覧だけで、失敗したら REST で取り直す。
 # gh で取得できなかったキーは、値を null にして error に理由を残す（0 とは書かない）。
 # 取得できなかったキーの一覧は header.collection_errors に入る。
 # =============================================================================
 set -u
 
-CRITERIA_VERSION="0.1.2"
-SKILL_VERSION="0.1.2"
+CRITERIA_VERSION="0.2.0"
+SKILL_VERSION="0.2.0"
+# このスクリプト自身とテンプレートは、設定ファイルの grep の対象から外す（自分の本文にある検索語に一致しないように）
+SELF_NAME="$(basename "$0")"
+TEMPLATE_NAME="collect-evidence.template.sh"
 WINDOW_DAYS=90
 TARGET_PATH="."
 ANONYMIZE_AUTHORS=0
@@ -137,12 +142,15 @@ WINDOW_START="$(compute_window_start "$ASSESSED_DATE" "$WINDOW_DAYS")"
 WINDOW_END="$ASSESSED_DATE"
 
 HEAD_SHA="$(git rev-parse HEAD)"
+LAST_COMMIT_DATE="$(git log -1 --format='%cs')"
 
-# emit <key> <command> <limit-or-empty> <value-json>
+# emit <key> <command> <limit-or-empty> <value-json> [note]
+# note は、gh の失敗以外の理由で値が null になるときなどに、その理由を残す
 emit() {
-  local key="$1" cmd="$2" limit="$3" value_json="$4"
-  jq -n --arg k "$key" --arg cmd "$cmd" --arg limit "$limit" --arg ts "$RUN_TS" --argjson v "$value_json" \
-    '{($k): {value: $v, command: $cmd, limit: (if $limit == "" then null else ($limit | tonumber? // $limit) end), collected_at: $ts}}' \
+  local key="$1" cmd="$2" limit="$3" value_json="$4" note="${5:-}"
+  jq -n --arg k "$key" --arg cmd "$cmd" --arg limit "$limit" --arg ts "$RUN_TS" --argjson v "$value_json" --arg note "$note" \
+    '{($k): ({value: $v, command: $cmd, limit: (if $limit == "" then null else ($limit | tonumber? // $limit) end), collected_at: $ts}
+      + (if $note == "" then {} else {note: $note} end))}' \
     >> "$TMP_JSONL"
 }
 
@@ -154,8 +162,10 @@ emit() {
 # ---------------------------------------------------------------------------
 GH_RETRY_MAX="${GH_RETRY_MAX:-3}"
 GH_RETRY_SLEEP="${GH_RETRY_SLEEP:-3}"
-# 再試行しても直らない失敗（未認証、リモートが無い、リポジトリが無い等）を見分ける正規表現
-GH_PERMANENT_ERROR_REGEX='auth login|not logged|authentication|no git remotes|none of the git remotes|could not resolve to a repository|not a git repository|HTTP 401|HTTP 404'
+# 再試行しても直らない失敗（未認証、権限が無い、GraphQL が使えない、リモートが無い、リポジトリが無い等）を見分ける正規表現
+GH_PERMANENT_ERROR_REGEX='auth login|not logged|authentication|no git remotes|none of the git remotes|could not resolve to a repository|not a git repository|HTTP 401|HTTP 403|HTTP 404|GraphQL is not available'
+# レート制限（HTTP 403 で返ることがある）は待てば直るので、上の正規表現に一致しても再試行する
+GH_RATE_LIMIT_REGEX='rate limit'
 
 # gh_retry <gh の引数...> : gh を最大 GH_RETRY_MAX 回実行する。成功したら標準出力を出して 0 を返す。
 # 失敗したら最後のエラーを GH_ERR_FILE に残して 1 を返す（$(...) の中で呼ばれても読めるようにファイルに書く）。
@@ -167,7 +177,9 @@ gh_retry() {
       return 0
     fi
     [ "$attempt" -ge "$GH_RETRY_MAX" ] && return 1
-    grep -qiE "$GH_PERMANENT_ERROR_REGEX" "$GH_ERR_FILE" && return 1
+    if ! grep -qiE "$GH_RATE_LIMIT_REGEX" "$GH_ERR_FILE"; then
+      grep -qiE "$GH_PERMANENT_ERROR_REGEX" "$GH_ERR_FILE" && return 1
+    fi
     sleep $(( GH_RETRY_SLEEP * attempt ))
     attempt=$(( attempt + 1 ))
   done
@@ -201,21 +213,27 @@ gh_int_key() {
   fi
 }
 
-# 最初に gh を使えるか（インストール済み・認証済みで、対象が GitHub のリポジトリか）を確かめる。
+# 対象の owner/name は git のリモート（origin、無ければ最初のリモート）から決める。
+# gh repo view は GraphQL API を使うので、GraphQL が使えない環境でも動くように使わない。
+REPO_REMOTE="$(git remote get-url origin 2>/dev/null || true)"
+if [ -z "$REPO_REMOTE" ]; then
+  FIRST_REMOTE="$(git remote | head -1)"
+  [ -n "$FIRST_REMOTE" ] && REPO_REMOTE="$(git remote get-url "$FIRST_REMOTE" 2>/dev/null || true)"
+fi
+REPO_NWO="$(printf '%s' "$REPO_REMOTE" | sed -E 's#/+$##; s#\.git$##; s#.*[:/]([^/]+/[^/]+)$#\1#')"
+
+# 最初に gh を使えるか（インストール済み・認証済みで、対象が GitHub のリポジトリか）を REST API で確かめる。
 # 使えないときは、GitHub 由来のキーを再試行せずにすべて「取得できなかった」と記録する。
 GH_AVAILABLE=0
 GH_UNAVAILABLE_REASON=""
-REPO_NWO=""
 if ! command -v gh >/dev/null 2>&1; then
   GH_UNAVAILABLE_REASON="gh command not found"
-elif REPO_NWO="$(gh_retry repo view --json nameWithOwner -q .nameWithOwner)"; then
+elif [ -z "$REPO_NWO" ]; then
+  GH_UNAVAILABLE_REASON="no git remotes found"
+elif gh_retry api "repos/$REPO_NWO" --jq .full_name >/dev/null; then
   GH_AVAILABLE=1
 else
-  REPO_NWO=""
   GH_UNAVAILABLE_REASON="$(gh_last_error)"
-fi
-if [ -z "$REPO_NWO" ]; then
-  REPO_NWO="$(git remote get-url origin 2>/dev/null | sed -E 's#\.git$##; s#.*[:/]([^/]+/[^/]+)$#\1#' || true)"
 fi
 
 json_bool() { [ "$1" = "1" ] && echo true || echo false; }
@@ -247,6 +265,7 @@ list_file_names() {
 
 # grep_any [-i] <ERE> <path>... : 存在するパスだけを再帰検索し、1 件でも一致すれば 0 を返す。
 # grep は読めないパスが 1 つでもあると、一致があっても終了コード 2 を返すので、先に存在するものだけに絞る。
+# このスクリプト自身とテンプレートは検索しない（本文にある既定の検索語に一致してしまうため）。
 grep_any() {
   local icase=""
   if [ "$1" = "-i" ]; then icase="-i"; shift; fi
@@ -254,7 +273,7 @@ grep_any() {
   local found=() p
   for p in "$@"; do [ -e "$p" ] && found+=("$p"); done
   [ ${#found[@]} -gt 0 ] || return 1
-  grep -rqE $icase -- "$ptn" "${found[@]}" 2>/dev/null
+  grep -rqE $icase --exclude="$SELF_NAME" --exclude="$TEMPLATE_NAME" -- "$ptn" "${found[@]}" 2>/dev/null
 }
 
 # regex_to_gh_query <a|b|c> : GitHub 検索用に `a OR b OR c` へ変換する
@@ -271,17 +290,38 @@ anonymize_authors() {
   fi
 }
 
-AUTHORS_TOP5_JSON="$(git log --format='%an' | sort | uniq -c | sort -rn | head -5 | uniq_c_to_array author | anonymize_authors author)"
-SINGLE_AUTHOR="$(echo "$AUTHORS_TOP5_JSON" | jq 'length <= 1')"
+# bot の名前・ログイン（`[bot]` で終わるもの、`app/` で始まるもの）
+BOT_NAME_REGEX='\[bot\]$|^app/'
+
+# コミット著者は .mailmap で名寄せしてから数える（同じ人が複数の名前・メールアドレスでコミットしていることがある）
+COMMIT_AUTHORS="$(git log --use-mailmap --format='%aN' | sort | uniq -c | sort -rn)"
+AUTHORS_TOP5_JSON="$(printf '%s\n' "$COMMIT_AUTHORS" | head -5 | uniq_c_to_array author | anonymize_authors author)"
+HUMAN_COMMIT_AUTHORS="$(printf '%s\n' "$COMMIT_AUTHORS" | uniq_c_to_array author | jq --arg bot "$BOT_NAME_REGEX" '[.[] | select(.author | test($bot; "i") | not)] | length')"
 
 # gh の一覧取得の安全上限（値が上限に張り付いていたら、実数はもっと多い）
 GH_LIMIT=500
 GH_LABEL_LIMIT=1000
+# GitHub の検索 API が返す結果の上限
+GH_SEARCH_LIMIT=1000
+
+# fetch_issue_labels : 新しい順に最大 GH_LABEL_LIMIT 件の Issue（PR を除く）に付いたラベル名を 1 行ずつ出す（REST API）
+fetch_issue_labels() {
+  local page=1 page_json page_len issues=0 rest
+  while :; do
+    page_json="$(gh_retry api "repos/$REPO_NWO/issues?state=all&per_page=100&page=$page")" || return 1
+    page_len="$(printf '%s' "$page_json" | jq 'length')"
+    rest=$(( GH_LABEL_LIMIT - issues ))
+    printf '%s' "$page_json" | jq -r --argjson rest "$rest" '[.[] | select(.pull_request | not)] | .[:$rest][] | .labels[].name'
+    issues=$(( issues + $(printf '%s' "$page_json" | jq --argjson rest "$rest" '[.[] | select(.pull_request | not)] | .[:$rest] | length') ))
+    { [ "$page_len" -lt 100 ] || [ "$issues" -ge "$GH_LABEL_LIMIT" ]; } && return 0
+    page=$(( page + 1 ))
+  done
+}
 
 # Issue に付いたラベル名の一覧（延べ。対象は最大 GH_LABEL_LIMIT 件の Issue）。H・M・P で使い回す
 LABELS_OK=0
 LABELS_FAILURE_REASON=""
-if [ "$GH_AVAILABLE" = "1" ] && ALL_ISSUE_LABELS="$(gh_retry issue list --state all --limit "$GH_LABEL_LIMIT" --json labels -q '.[].labels[].name')"; then
+if [ "$GH_AVAILABLE" = "1" ] && ALL_ISSUE_LABELS="$(fetch_issue_labels)"; then
   LABELS_OK=1
 else
   ALL_ISSUE_LABELS=""
@@ -304,13 +344,14 @@ ENFORCE_TARGETS="${ENFORCEMENT_FILES:-.pre-commit-config.yaml .husky lefthook.ym
 # ---------------------------------------------------------------------------
 # A. エージェント運用知識の蓄積と継承
 # ---------------------------------------------------------------------------
+# エージェント向けの指示書（GitHub Copilot のパス別指示書 .github/instructions/*.instructions.md 等を含む）
+AGENT_INSTRUCTION_PATHS="AGENTS.md CLAUDE.md GEMINI.md .agents .claude .cursor .github/copilot-instructions.md .github/instructions .github/prompts .github/chatmodes .windsurfrules .clinerules CONVENTIONS.md"
 A_FILES=()
-for f in AGENTS.md CLAUDE.md GEMINI.md .agents .claude .cursor .github/copilot-instructions.md; do
+for f in $AGENT_INSTRUCTION_PATHS; do
   [ -e "$f" ] && A_FILES+=("$f")
 done
 A_FILES_JSON="$(printf '%s\n' "${A_FILES[@]:-}" | lines_to_array)"
-emit "a.agent_instruction_files" \
-  "ls AGENTS.md CLAUDE.md GEMINI.md .agents .claude .cursor .github/copilot-instructions.md" "" "$A_FILES_JSON"
+emit "a.agent_instruction_files" "ls $AGENT_INSTRUCTION_PATHS" "" "$A_FILES_JSON"
 
 # スキルはディレクトリ（またはその symlink）単位で数え、同名は 1 つにまとめる
 A_SKILLS_COUNT="$(for d in .agents/skills .claude/skills skills; do
@@ -333,11 +374,11 @@ emit "b.issue_template_exists" "check issue templates" "" "$(json_bool "$B_ISSUE
 B_PR_TMPL="0"; { [ -f .github/pull_request_template.md ] || [ -f .github/PULL_REQUEST_TEMPLATE.md ] || [ -d .github/PULL_REQUEST_TEMPLATE ]; } && B_PR_TMPL="1"
 emit "b.pr_template_exists" "check pr templates" "" "$(json_bool "$B_PR_TMPL")"
 
-gh_int_key "b.issues_open_count" "gh issue list --state open --limit $GH_LIMIT --json number -q 'length'" "$GH_LIMIT" \
-  issue list --state open --limit "$GH_LIMIT" --json number -q 'length'
+gh_int_key "b.issues_open_count" "gh api search/issues q='type:issue state:open' --jq .total_count" "" \
+  api -X GET search/issues -f q="repo:$REPO_NWO type:issue state:open" -f per_page=1 --jq .total_count
 
-gh_int_key "b.issues_closed_count" "gh issue list --state closed --limit $GH_LABEL_LIMIT --json number -q 'length'" "$GH_LABEL_LIMIT" \
-  issue list --state closed --limit "$GH_LABEL_LIMIT" --json number -q 'length'
+gh_int_key "b.issues_closed_count" "gh api search/issues q='type:issue state:closed' --jq .total_count" "" \
+  api -X GET search/issues -f q="repo:$REPO_NWO type:issue state:closed" -f per_page=1 --jq .total_count
 
 # ---------------------------------------------------------------------------
 # C. システム設計・アーキテクチャ
@@ -373,7 +414,9 @@ D_COMMIT_TOTAL="$(git rev-list --count HEAD)"
 emit "d.commit_count_total" "git rev-list --count HEAD" "" "$(json_int "$D_COMMIT_TOTAL")"
 
 D_COMMITS_WINDOW="$(git log --since="$WINDOW_START" --oneline | wc -l | tr -d ' ')"
-emit "d.commits_window" "git log --since=<window-start> --oneline | wc -l" "" "$(json_int "$D_COMMITS_WINDOW")"
+D_COMMITS_WINDOW_NOTE=""
+[ "$(json_int "$D_COMMITS_WINDOW")" -eq 0 ] && D_COMMITS_WINDOW_NOTE="no commits in the window (last commit: $LAST_COMMIT_DATE)"
+emit "d.commits_window" "git log --since=<window-start> --oneline | wc -l" "" "$(json_int "$D_COMMITS_WINDOW")" "$D_COMMITS_WINDOW_NOTE"
 
 D_BY_MONTH_JSON="$(git log --format='%ad' --date=format:'%Y-%m' | sort | uniq -c | tail -12 | uniq_c_to_object)"
 emit "d.commits_by_month" "git log --format='%ad' --date=format:'%Y-%m' | sort | uniq -c | tail -12" "12" "$D_BY_MONTH_JSON"
@@ -382,12 +425,14 @@ emit "d.commits_by_month" "git log --format='%ad' --date=format:'%Y-%m' | sort |
 D_FP_SUBJECTS="$(git log --first-parent --since="$WINDOW_START" --format='%s')"
 D_FP_TOTAL="$(printf '%s' "$D_FP_SUBJECTS" | grep -c . || true)"
 D_FP_PR="$(printf '%s' "$D_FP_SUBJECTS" | grep -cE '\(#[0-9]+\)|^Merge pull request #[0-9]+' || true)"
+D_PR_RATIO_NOTE=""
 if [ "$(json_int "$D_FP_TOTAL")" -gt 0 ]; then
   D_PR_RATIO="$(jq -n --argjson a "$(json_int "$D_FP_PR")" --argjson b "$D_FP_TOTAL" '(($a/$b)*1000|round)/1000')"
 else
   D_PR_RATIO="null"
+  D_PR_RATIO_NOTE="no first-parent commits in the window (last commit: $LAST_COMMIT_DATE)"
 fi
-emit "d.pr_commit_ratio_window" "git log --first-parent --since=<window-start>: subjects with (#N) or 'Merge pull request #N' / all subjects" "" "$D_PR_RATIO"
+emit "d.pr_commit_ratio_window" "git log --first-parent --since=<window-start>: subjects with (#N) or 'Merge pull request #N' / all subjects" "" "$D_PR_RATIO" "$D_PR_RATIO_NOTE"
 
 # ---------------------------------------------------------------------------
 # E. テスト・QA
@@ -463,13 +508,21 @@ fi
 # ---------------------------------------------------------------------------
 G_MONITORING="0"
 MON_PTN="${MONITORING_PATTERNS:-sentry|uptime|healthcheck|health-check|datadog|newrelic|prometheus|grafana|pagerduty|opentelemetry}"
+# scripts には証拠収集スクリプト自身（既定の配置先 scripts/ai-sdlc/）も入るが、grep_any が自分自身を除くので誤検知しない
 # shellcheck disable=SC2086
 grep_any -i "$MON_PTN" ${MONITORING_DIRS:-.github/workflows terraform infra deploy k8s helm scripts} && G_MONITORING="1"
 emit "g.monitoring_configured" "check monitoring configuration" "" "$(json_bool "$G_MONITORING")"
 
-gh_int_key "g.incident_labeled_issues_count" "gh issue list with incident/postmortem labels in window" "$GH_LIMIT" \
-  issue list --state all --search "created:>=$WINDOW_START" -L "$GH_LIMIT" --json labels -q \
-  '[.[] | select([.labels[].name] | any(test("incident|postmortem";"i")))] | length'
+# 窓内に作られた Issue を検索 API で取り、incident / postmortem ラベルが付いたものを数える（ページごとの件数を足す）
+G_INCIDENT_CMD="gh api --paginate search/issues q='type:issue created:>=<window-start>' | labels matching incident|postmortem"
+if [ "$GH_AVAILABLE" = "1" ] && G_INCIDENT_PAGES="$(gh_retry api -X GET --paginate search/issues \
+    -f q="repo:$REPO_NWO type:issue created:>=$WINDOW_START" -f per_page=100 \
+    --jq '[.items[] | select([.labels[].name] | any(test("incident|postmortem"; "i")))] | length')"; then
+  emit "g.incident_labeled_issues_count" "$G_INCIDENT_CMD" "$GH_SEARCH_LIMIT" \
+    "$(printf '%s\n' "$G_INCIDENT_PAGES" | awk '{s += $1} END {print s + 0}')"
+else
+  emit_gh_failure "g.incident_labeled_issues_count" "$G_INCIDENT_CMD" "$GH_SEARCH_LIMIT"
+fi
 
 # ---------------------------------------------------------------------------
 # H. データ管理
@@ -485,12 +538,13 @@ emit "h.data_integrity_gate_configured" "check data/schema integrity gate in pre
 # ---------------------------------------------------------------------------
 # I. 開発環境・パイプラインへの AI 組み込み
 # ---------------------------------------------------------------------------
+TOOL_INTEGRATION_PATHS=".claude/settings.json .cursor .cursorrules .github/copilot-instructions.md .github/instructions .github/prompts .github/chatmodes .gemini .aider.conf.yml .continue .windsurfrules .clinerules"
 I_FILES=()
-for f in .claude/settings.json .cursor .cursorrules .github/copilot-instructions.md .gemini .aider.conf.yml .continue; do
+for f in $TOOL_INTEGRATION_PATHS; do
   [ -e "$f" ] && I_FILES+=("$f")
 done
 I_FILES_JSON="$(printf '%s\n' "${I_FILES[@]:-}" | lines_to_array)"
-emit "i.tool_integration_files" "check AI tool config files" "" "$I_FILES_JSON"
+emit "i.tool_integration_files" "check AI tool config files ($TOOL_INTEGRATION_PATHS)" "" "$I_FILES_JSON"
 
 # ローカルで強制されるガードレール: pre-commit の repo: local フック数 + .husky のフックファイル数 + lefthook.yml の有無
 I_PRECOMMIT_LOCAL="$(grep -c 'repo: local' .pre-commit-config.yaml 2>/dev/null || true)"
@@ -502,11 +556,13 @@ emit "i.local_guardrail_hooks_count" "count pre-commit repo: local + .husky hook
 # ---------------------------------------------------------------------------
 # J. AI 利用ポリシーと機械的強制
 # ---------------------------------------------------------------------------
+# エージェント向けの指示書（ツール別の指示書を含む）か、AI 利用の方針文書があれば true
+GOVERNANCE_PATHS="AGENTS.md CLAUDE.md GEMINI.md .github/copilot-instructions.md .github/instructions .windsurfrules .clinerules CONVENTIONS.md docs/ai-policy.md docs/governance.md docs/ai-guidelines.md"
 J_GOV="0"
-for gf in AGENTS.md CLAUDE.md GEMINI.md docs/ai-policy.md docs/governance.md docs/ai-guidelines.md; do
-  [ -f "$gf" ] && { J_GOV="1"; break; }
+for gf in $GOVERNANCE_PATHS; do
+  [ -e "$gf" ] && { J_GOV="1"; break; }
 done
-emit "j.governance_docs_present" "check governance docs" "" "$(json_bool "$J_GOV")"
+emit "j.governance_docs_present" "check governance docs ($GOVERNANCE_PATHS)" "" "$(json_bool "$J_GOV")"
 
 J_DEPENDABOT="0"
 { [ -f .github/dependabot.yml ] || [ -f .github/dependabot.yaml ] || [ -f .github/renovate.json ] || [ -f renovate.json ]; } && J_DEPENDABOT="1"
@@ -541,27 +597,69 @@ emit "k.coauthored_ratio_lower_bound" "coauthored_count / commit_count_total" ""
 # ---------------------------------------------------------------------------
 # L. 人間–AI・AI–AI の協働プロトコル
 # ---------------------------------------------------------------------------
-# 窓内にマージされた PR の一覧を 1 回だけ取得し、レビュー状況と作成者の両方に使う
-if [ "$GH_AVAILABLE" = "1" ] && L_MERGED_PRS="$(gh_retry pr list --state merged --search "merged:>=$WINDOW_START" \
-    --json reviews,comments,additions,author -L "$GH_LIMIT")"; then
+# 窓内にマージされた PR の一覧を 1 回だけ取得し、レビュー状況と作成者の両方に使う。
+# 一覧は [{reviews: 件数, comments: 件数, additions: 追加行数, author: ログイン}, …] にそろえる。
+# まず GraphQL（gh pr list、1 回で済む）で取り、失敗したら REST（検索 API + PR ごとに 2 回）で取り直す。
+# bot のログインは GraphQL の表記（app/<name>）にそろえる（REST では <name>[bot] になる）。
+l_merged_prs_graphql() {
+  local out
+  out="$(gh_retry pr list --state merged --search "merged:>=$WINDOW_START" --json reviews,comments,additions,author -L "$GH_LIMIT")" || return 1
+  printf '%s' "$out" | jq -c '[.[] | {reviews: (.reviews | length), comments: (.comments | length), additions, author: .author.login}]'
+}
+l_merged_prs_rest() {
+  local items line num additions reviews rows=""
+  items="$(gh_retry api -X GET --paginate search/issues -f q="repo:$REPO_NWO type:pr is:merged merged:>=$WINDOW_START" -f per_page=100 \
+    --jq '.items[] | {number, comments, author: (if .user.type == "Bot" then "app/" + (.user.login | sub("\\[bot\\]$"; "")) else .user.login end)} | @json')" || return 1
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    num="$(printf '%s' "$line" | jq '.number')"
+    additions="$(gh_retry api "repos/$REPO_NWO/pulls/$num" --jq .additions)" || return 1
+    reviews="$(gh_retry api "repos/$REPO_NWO/pulls/$num/reviews?per_page=100" --jq length)" || return 1
+    rows+="$(printf '%s' "$line" | jq -c --argjson a "$(json_int "$additions")" --argjson r "$(json_int "$reviews")" \
+      '{reviews: $r, comments, additions: $a, author}')"$'\n'
+  done <<< "$(printf '%s\n' "$items" | head -n "$GH_LIMIT")"
+  printf '%s' "$rows" | jq -s -c '.'
+}
+
+L_ROUTE=""
+if [ "$GH_AVAILABLE" != "1" ]; then
+  :
+elif L_MERGED_PRS="$(l_merged_prs_graphql)"; then
+  L_ROUTE="gh pr list --state merged --search 'merged:>=<window-start>' (GraphQL)"
+elif L_MERGED_PRS="$(l_merged_prs_rest)"; then
+  L_ROUTE="gh api search/issues 'type:pr is:merged merged:>=<window-start>' + pulls/{n} + pulls/{n}/reviews (REST)"
+fi
+L_HUMAN_PR_AUTHORS=""
+if [ -n "$L_ROUTE" ]; then
   L_PR_STATS_JSON="$(printf '%s' "$L_MERGED_PRS" | jq -c \
-    '{count: length, with_review: ([.[] | select(.reviews|length>0)]|length), with_comments: ([.[] | select(.comments|length>0)]|length), avg_additions: (if length>0 then (([.[].additions]|add)/length|floor) else 0 end)}')"
-  L_PR_AUTHORS_JSON="$(printf '%s' "$L_MERGED_PRS" | jq -r '.[].author.login' | \
+    '{count: length, with_review: ([.[] | select(.reviews > 0)] | length), with_comments: ([.[] | select(.comments > 0)] | length), avg_additions: (if length > 0 then (([.[].additions] | add) / length | floor) else 0 end)}')"
+  L_PR_AUTHORS_JSON="$(printf '%s' "$L_MERGED_PRS" | jq -r '.[].author' | \
     sort | uniq -c | sort -rn | uniq_c_to_array author | anonymize_authors pr-author)"
-  emit "l.pr_review_stats_window" "gh pr list merged review stats in window" "$GH_LIMIT" "$L_PR_STATS_JSON"
-  emit "l.pr_authors_window" "gh pr list merged authors in window" "$GH_LIMIT" "$L_PR_AUTHORS_JSON"
+  L_HUMAN_PR_AUTHORS="$(printf '%s' "$L_MERGED_PRS" | jq --arg bot "$BOT_NAME_REGEX" '[.[].author | select(test($bot; "i") | not)] | unique | length')"
+  emit "l.pr_review_stats_window" "$L_ROUTE: review stats" "$GH_LIMIT" "$L_PR_STATS_JSON"
+  emit "l.pr_authors_window" "$L_ROUTE: authors" "$GH_LIMIT" "$L_PR_AUTHORS_JSON"
 else
   L_FAILURE_REASON="$(gh_failure_reason)"
-  emit_gh_failure "l.pr_review_stats_window" "gh pr list merged review stats in window" "$GH_LIMIT" "$L_FAILURE_REASON"
-  emit_gh_failure "l.pr_authors_window" "gh pr list merged authors in window" "$GH_LIMIT" "$L_FAILURE_REASON"
+  emit_gh_failure "l.pr_review_stats_window" "gh pr list / gh api: merged PR review stats in window" "$GH_LIMIT" "$L_FAILURE_REASON"
+  emit_gh_failure "l.pr_authors_window" "gh pr list / gh api: merged PR authors in window" "$GH_LIMIT" "$L_FAILURE_REASON"
+fi
+
+# 単独メンテナか：bot を除いたコミット著者（名寄せ後）が 1 名以下なら true。
+# そうでなくても、窓内にマージされた PR の作成者（bot を除く）が 1 名だけなら true とし、判定の根拠を残す。
+if [ "$(json_int "$HUMAN_COMMIT_AUTHORS")" -le 1 ]; then
+  SINGLE_AUTHOR="true"; SINGLE_AUTHOR_BASIS='"commit_authors"'
+elif [ "$L_HUMAN_PR_AUTHORS" = "1" ]; then
+  SINGLE_AUTHOR="true"; SINGLE_AUTHOR_BASIS='"pr_authors"'
+else
+  SINGLE_AUTHOR="false"; SINGLE_AUTHOR_BASIS="null"
 fi
 
 # ---------------------------------------------------------------------------
 # M. 合成ユーザーリサーチ
 # ---------------------------------------------------------------------------
 UR_PTN="${USER_RESEARCH_REGEX:-persona|ペルソナ|user-research|ux-research|user-interview|usability}"
-gh_int_key "m.user_research_issues_count" "gh issue list user research issues in window (keywords joined with OR)" "$GH_LIMIT" \
-  issue list --state all --search "created:>=$WINDOW_START $(regex_to_gh_query "$UR_PTN")" -L "$GH_LIMIT" --json number -q 'length'
+gh_int_key "m.user_research_issues_count" "gh api search/issues q='type:issue created:>=<window-start> <keywords joined with OR>' --jq .total_count" "" \
+  api -X GET search/issues -f q="repo:$REPO_NWO type:issue created:>=$WINDOW_START $(regex_to_gh_query "$UR_PTN")" -f per_page=1 --jq .total_count
 
 label_key "m.user_research_labels_count" "gh issue list labels matching user research" "$UR_PTN"
 
@@ -571,7 +669,7 @@ label_key "m.user_research_labels_count" "gh issue list labels matching user res
 DOC_TARGETS="${DOC_DIRS:-docs}"
 RETRO_DOC_PTN="${RETRO_DOC_REGEX:-ふりかえり|振り返り|retrospect|postmortem}"
 # shellcheck disable=SC2086
-N_RETRO_DOCS="$(existing_paths $DOC_TARGETS | tr '\n' '\0' | xargs -0 grep -rliE -- "$RETRO_DOC_PTN" /dev/null 2>/dev/null | wc -l | tr -d ' ')"
+N_RETRO_DOCS="$(existing_paths $DOC_TARGETS | tr '\n' '\0' | xargs -0 grep -rliE --exclude="$SELF_NAME" --exclude="$TEMPLATE_NAME" -- "$RETRO_DOC_PTN" /dev/null 2>/dev/null | wc -l | tr -d ' ')"
 emit "n.retro_docs_count" "grep retro docs in DOC_DIRS ($DOC_TARGETS)" "" "$(json_int "$N_RETRO_DOCS")"
 
 CHANGELOG_TARGET="${CHANGELOG_FILE:-CHANGELOG.md}"
@@ -580,15 +678,15 @@ N_CHANGELOG_LINES="0"
 emit "n.changelog_lines" "wc -l $CHANGELOG_TARGET" "" "$(json_int "$N_CHANGELOG_LINES")"
 
 RETRO_PR_SEARCH_PTN="${RETRO_PR_SEARCH:-retro OR retrospective OR postmortem OR ふりかえり OR 振り返り in:title}"
-gh_int_key "n.retro_prs_window_count" "gh pr list retro PRs in window" "$GH_LIMIT" \
-  pr list --state merged --search "merged:>=$WINDOW_START $RETRO_PR_SEARCH_PTN" -L "$GH_LIMIT" --json number -q 'length'
+gh_int_key "n.retro_prs_window_count" "gh api search/issues q='type:pr is:merged merged:>=<window-start> $RETRO_PR_SEARCH_PTN' --jq .total_count" "" \
+  api -X GET search/issues -f q="repo:$REPO_NWO type:pr is:merged merged:>=$WINDOW_START $RETRO_PR_SEARCH_PTN" -f per_page=1 --jq .total_count
 
 # ---------------------------------------------------------------------------
 # O. 価値計測
 # ---------------------------------------------------------------------------
 VAL_PTN="${VALUE_METRIC_REGEX:-lead time|リードタイム|サイクルタイム|cycle time|throughput|スループット|dora|deployment frequency|change failure rate|mttr}"
 # shellcheck disable=SC2086
-O_VALUE_MENTIONS="$(existing_paths $DOC_TARGETS | tr '\n' '\0' | xargs -0 grep -rnEi --include='*.md' -- "$VAL_PTN" /dev/null 2>/dev/null | wc -l | tr -d ' ')"
+O_VALUE_MENTIONS="$(existing_paths $DOC_TARGETS | tr '\n' '\0' | xargs -0 grep -rnEi --include='*.md' --exclude="$SELF_NAME" --exclude="$TEMPLATE_NAME" -- "$VAL_PTN" /dev/null 2>/dev/null | wc -l | tr -d ' ')"
 emit "o.value_metric_mentions_count" "grep value metrics mentions in DOC_DIRS ($DOC_TARGETS)" "" "$(json_int "$O_VALUE_MENTIONS")"
 
 QUANT_PTN="${QUANTITATIVE_IMPACT_REGEX:-[0-9]+(\.[0-9]+)? ?(%|ms|sec|min|秒|分)|短縮|削減|speedup|faster|reduction}"
@@ -620,7 +718,9 @@ jq -n \
   --arg window_end "$WINDOW_END" \
   --argjson window_days "$WINDOW_DAYS" \
   --argjson authors_top5 "$AUTHORS_TOP5_JSON" \
+  --arg last_commit_date "$LAST_COMMIT_DATE" \
   --argjson single_author "$SINGLE_AUTHOR" \
+  --argjson single_author_basis "$SINGLE_AUTHOR_BASIS" \
   --argjson authors_anonymized "$(json_bool "$ANONYMIZE_AUTHORS")" \
   --argjson gh_available "$(json_bool "$GH_AVAILABLE")" \
   --argjson evidence "$EVIDENCE_JSON" \
@@ -632,8 +732,10 @@ jq -n \
       criteria_version: $criteria_version,
       skill_version: $skill_version,
       window: {start: $window_start, end: $window_end, days: $window_days},
+      last_commit_date: $last_commit_date,
       authors_top5: $authors_top5,
       single_author: $single_author,
+      single_author_basis: $single_author_basis,
       authors_anonymized: $authors_anonymized,
       gh_available: $gh_available,
       collection_errors: [$evidence | to_entries[] | select(.value.error != null) | .key]
