@@ -4,12 +4,13 @@
 
 ## [0.3.0] - 2026-09-25
 
-private の大規模モノレポ（Java / Kotlin、`gh` なし、書き込みなし、Claude（Cowork）のクラウドセッション）での利用者フィードバック（[kemsakurai/scrum-guides#2234](https://github.com/kemsakurai/scrum-guides/issues/2234)）に対応しました。`criteria.md` に外部運用の申告と、B・H のレベル 1〜2 の充足例を加えたので、minor バージョンを上げました。各レベルの判定基準の文言は変えていません。0.2.x の採点と比べるときは、下の「証拠の値が変わるキー」の影響を確かめてください。
+private の大規模モノレポ（Java / Kotlin、`gh` なし、書き込みなし、Claude（Cowork）のクラウドセッション）での利用者フィードバック（[kemsakurai/scrum-guides#2234](https://github.com/kemsakurai/scrum-guides/issues/2234)）に対応しました。`criteria.md` に外部運用の申告と、B・H のレベル 1〜2 の充足例を加えたので、minor バージョンを上げました。各レベルの行の文言は変えていませんが、B のレベル 1 は充足例によって判定が厳しくなります（下の「判定基準」）。0.2.x の採点と比べるときは、B のスコアと、下の「証拠の値が変わるキー」の影響を確かめてください。
 
 ### 判定基準（`criteria.md`）
 
 - 「外部運用の申告」を加えた。GitHub の外で運用していると申告された項目は、スコアを変えずに採点表の「外部運用」列に `申告あり` と出どころを書き、「本当に無い 0」と「外にあるので見えない 0」を区別する。
 - B（要件定義）と H（データ管理）に、レベル 1〜2 の充足例と非充足例を加えた（H はリポジトリの種類ごと）。境界的なときは低い方を採り、理由を書く。
+- **採点ルールの変更（B のレベル 1）**：Issue テンプレートがあっても、AI に要件を渡すことを想定した形跡が無ければ 1 にしない（テンプレートの存在だけでは 1 にしない）と明記した。0.2.x でテンプレートの存在だけを根拠に B を 1 としていた採点は、0.3.0 では 0 になりうる。再評価で B が下がったときは、この変更によるものか、実態の変化によるものかを分けて書く。
 
 ### 修正
 
@@ -21,7 +22,7 @@ private の大規模モノレポ（Java / Kotlin、`gh` なし、書き込みな
 - 出力 JSON のヘッダーに、`evaluated_ref`（評価したブランチ・コミット、既定ブランチとその遅れ、最終 fetch 日時、未コミットの変更の有無）、`framework_checked_at`（上流フレームワークとの差分を確認した日。`--framework-checked-at` で渡す）、`config`（設定ブロックに埋めた値）を加えた。既定ブランチから遅れている、既定ブランチ以外を評価している、未コミットの変更があるときは、標準エラーに警告を出す。
 - 証拠キーを 6 つ加えた（44 → 50）。
   - `a.rule_files_count`：識別子付きのルールファイル（Cursor の `.mdc`、Copilot のパス別指示書など）の数
-  - `a.rule_change_commits_window`：窓内に指示書・ルール・ルール履歴を変えた既定ブランチのコミットの数（ルール変更を専用の Issue フォームやラベル付きの PR で管理している運用も拾える）
+  - `a.rule_change_commits_window`：窓内に指示書・ルール・ルール履歴のパスを変えた既定ブランチのコミットの数。`.claude`・`.agents` 等はディレクトリごと対象なので、スキルや設定ファイルだけを変えたコミットも数える。ラベルや Issue フォームは見ない（ラベルで管理している運用は、`references/evidence-keys.md` の検索クエリで件数を添える）
   - `i.agent_hooks_count`・`i.agent_permission_denies_count`：Claude Code / Gemini CLI の `settings.json` の `hooks` と、`permissions.deny` のルール数
   - `k.coauthored_ratio_window`：窓内の、マージコミットを除いたコミットに限った AI 関与率（全履歴の `k.coauthored_ratio_lower_bound` は、歴史の長いリポジトリで極端に小さく出る）
   - `l.ai_pr_stats_window`：窓内にマージされた PR のうち、AI エージェントが作った件数、AI のレビュアーが付いた件数、AI のレビューの後に人が承認した件数

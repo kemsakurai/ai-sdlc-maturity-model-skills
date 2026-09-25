@@ -204,7 +204,11 @@ if [ -n "$DEFAULT_BRANCH" ] && DEFAULT_SHA="$(git rev-parse -q --verify "refs/re
   BEHIND_DEFAULT="$(git rev-list --count "HEAD..refs/remotes/origin/$DEFAULT_BRANCH")"
   [ "$DEFAULT_SHA" = "$HEAD_SHA" ] && IS_DEFAULT_BRANCH="true"
 fi
-FETCH_EPOCH="$(file_mtime_epoch "$(git rev-parse --git-path FETCH_HEAD)")"
+# 最後に fetch した日時は FETCH_HEAD の更新日時。FETCH_HEAD は worktree ごとに別で、メインのチェックアウトで fetch すると
+# 共通の git ディレクトリに、worktree で fetch するとその worktree 専用のディレクトリに書かれる。両方を見て新しい方を採る
+FETCH_EPOCH="$(for fh in "$(git rev-parse --git-common-dir)/FETCH_HEAD" "$(git rev-parse --git-path FETCH_HEAD)"; do
+    file_mtime_epoch "$fh"
+  done | sort -n | tail -1)"
 LAST_FETCH_AT=""
 [ -n "$FETCH_EPOCH" ] && LAST_FETCH_AT="$(epoch_to_iso "$FETCH_EPOCH")"
 UNCOMMITTED_CHANGES="false"
@@ -448,10 +452,16 @@ RULE_PTN="${RULE_FILES_REGEX:-^\.cursor/rules/.+\.mdc$|^\.github/instructions/.+
 A_RULE_FILES="$(printf '%s\n' "$ALL_TRACKED" | grep -cE -- "$RULE_PTN" || true)"
 emit "a.rule_files_count" "git ls-files | grep -E RULE_FILES_REGEX" "" "$(json_int "$A_RULE_FILES")"
 
-# 窓内に、指示書・ルール・ルール履歴を変えた既定ブランチのコミット（PR）の数
+# 窓内に、指示書・ルール・ルール履歴のパスを変えた既定ブランチのコミット（squash なら PR）の数。
+# .claude・.agents 等はディレクトリごと対象なので、スキルや設定ファイルだけを変えたコミットも数える。ラベルや Issue フォームは見ない。
+# git log が失敗したときは 0 ではなく null と note を記録する
+A_RULE_CHANGES_CMD="git log --first-parent --since=<window-start> -- <agent instruction paths> <rule history files> | wc -l"
 # shellcheck disable=SC2086
-A_RULE_CHANGES="$(git log --first-parent --since="$WINDOW_START" --format='%H' -- $AGENT_INSTRUCTION_PATHS ${RULE_HISTORY_FILES:-docs/rule-history.md rule-history.md} 2>/dev/null | grep -c . || true)"
-emit "a.rule_change_commits_window" "git log --first-parent --since=<window-start> -- <agent instruction paths> <rule history files> | wc -l" "" "$(json_int "$A_RULE_CHANGES")"
+if A_RULE_CHANGES_LOG="$(git log --first-parent --since="$WINDOW_START" --format='%H' -- $AGENT_INSTRUCTION_PATHS ${RULE_HISTORY_FILES:-docs/rule-history.md rule-history.md} 2>"$GH_ERR_FILE")"; then
+  emit "a.rule_change_commits_window" "$A_RULE_CHANGES_CMD" "" "$(printf '%s' "$A_RULE_CHANGES_LOG" | grep -c . || true)"
+else
+  emit "a.rule_change_commits_window" "$A_RULE_CHANGES_CMD" "" "null" "git log failed: $(gh_last_error)"
+fi
 
 # ---------------------------------------------------------------------------
 # B. 要件定義

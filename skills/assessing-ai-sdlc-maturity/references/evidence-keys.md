@@ -149,7 +149,7 @@ GitHub からの取得は REST API（`gh api`、`gh run list`）で行うので�
 | `a.skills_count` | `.agents/skills` / `.claude/skills` / `.github/skills` / `skills` 直下のディレクトリ（symlink 含む）の数。同名はまとめて 1 | スキルとして体系化されていればレベル 3 の候補 |
 | `a.rule_history_doc_present` | ルール変更の根拠履歴（`RULE_HISTORY_FILES`）の有無 | レベル 3 の候補 |
 | `a.rule_files_count` | 識別子付きのルールファイル（`RULE_FILES_REGEX`）の数 | ルールの規模。レベル 3 の「識別子付きのルール」の目安 |
-| `a.rule_change_commits_window` | 窓内に、指示書・ルール・ルール履歴を変えた既定ブランチのコミット（squash なら PR）の数 | ルールを継続的に見直しているか。ルール変更を Issue フォームや専用ラベルの PR で管理している運用でも拾える（レベル 3 の候補） |
+| `a.rule_change_commits_window` | 窓内に、指示書・ルール・ルール履歴のパスを変えた既定ブランチのコミット（squash なら PR）の数。`.claude`・`.agents` 等はディレクトリごと対象なので、スキルや設定ファイルだけを変えたコミットも数える。ラベルや Issue フォームは見ない。`git log` が失敗したら `null` と `note` | ルールを継続的に見直しているか（レベル 3 の候補）。上限が高めに出るので、ルールの変更そのものかは中身を見て確かめる。ルール変更を専用のラベルを付けた PR で管理している運用では、`repo:<o/n> is:pr is:merged merged:>=<start> label:<ラベル名>` の件数を所見に添える |
 
 ## B. 要件定義
 

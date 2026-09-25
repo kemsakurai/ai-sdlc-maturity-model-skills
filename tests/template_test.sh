@@ -289,8 +289,26 @@ check "別ブランチ: is_default_branch が false" "$OUT" '.header.evaluated_r
 if grep -q '^警告: 評価したのは既定ブランチ（main）ではなく feature です' "$WORK/feature.err"; then pass "別ブランチ: stderr に警告が出る"; else fail "別ブランチ: stderr に警告が出る"; fi
 git -C "$REPO" checkout -q main
 git -C "$REPO" branch -q -D feature
+# SKILL.md の手順（メインのチェックアウトで fetch → origin/main を worktree に取り出す）でも、最後に fetch した日時が取れる。
+# メインのチェックアウトでの fetch は、worktree 専用ではなく共通の git ディレクトリの FETCH_HEAD に書かれる
+git -C "$REPO" worktree add -q --detach "$WORK/wt" refs/remotes/origin/main
+OUT="$WORK/wt-nofetch.json"
+FAKE_GH_MODE=unauth bash "$WORK/default.sh" "$WORK/wt" > "$OUT" 2>/dev/null
+check "worktree: fetch していなければ last_fetch_at は null" "$OUT" '.header.evaluated_ref.last_fetch_at == null'
+: > "$REPO/.git/FETCH_HEAD"
+OUT="$WORK/wt-fetched.json"
+FAKE_GH_MODE=unauth bash "$WORK/default.sh" "$WORK/wt" > "$OUT" 2>/dev/null
+check "worktree: メインのチェックアウトでの fetch の日時を取る" "$OUT" '.header.evaluated_ref.last_fetch_at | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T")'
+git -C "$REPO" worktree remove --force "$WORK/wt"
+rm -f "$REPO/.git/FETCH_HEAD"
 git -C "$REPO" symbolic-ref --delete refs/remotes/origin/HEAD
 git -C "$REPO" update-ref -d refs/remotes/origin/main
+
+# git log が失敗したら a.rule_change_commits_window は 0 ではなく null と note（不正なパス指定で失敗させる）
+sed -E -e 's#\{\{RULE_HISTORY_FILES\}\}#:(bogus)x#' -e 's/\{\{[A-Z_]+\}\}//g' "$TPL" > "$WORK/bad-pathspec.sh"
+OUT="$WORK/bad-pathspec.json"
+FAKE_GH_MODE=unauth bash "$WORK/bad-pathspec.sh" "$REPO" > "$OUT" 2>/dev/null
+check "git log の失敗は null と note" "$OUT" '.evidence["a.rule_change_commits_window"].value == null and (.evidence["a.rule_change_commits_window"].note | test("git log failed"))'
 
 # --- gh の取得 ---------------------------------------------------------------
 # すべて成功: REST で取った値
