@@ -126,7 +126,7 @@ GitHub からの取得は REST API（`gh api`、`gh run list`）で行うので�
 | `CHANGELOG_FILE` | `n.changelog_lines`, `o.changelog_measurement_lines_count` | `CHANGELOG.md` |
 | `RULE_HISTORY_FILES` | `a.rule_history_doc_present`, `a.rule_change_commits_window` | `docs/rule-history.md rule-history.md`（仮の名前。エージェント向けルールの変更理由を残すファイルは決まった名前が無いので、スキャフォールドのときに探して設定する） |
 | `RULE_FILES_REGEX` | `a.rule_files_count` | `.cursor/rules/*.mdc`、`.github/instructions/*.instructions.md`、`.claude/rules/*.md`、`.agents/rules/*.md`、`.windsurf/rules/*.md`、`.clinerules/*.md` |
-| `TEST_FILE_FIND_EXPR`, `TEST_CASE_REGEX` | `e.test_files_count`, `e.test_cases_count` | Python / JS / TS / Go / Java / Kotlin / Ruby の一般的な命名 |
+| `TEST_FILE_FIND_EXPR`, `TEST_CASE_REGEX` | `e.test_files_count`, `e.test_cases_count` | Python / JS / TS / Go / Java / Kotlin / Ruby の一般的な命名。モノレポや多言語リポジトリでは `-name "*.test.ts" -o -name "*_test.rs"` のように `-o` で複数条件を繋ぐ |
 | `COVERAGE_GATE_FILES` | `e.coverage_gate_configured` | pytest / coverage / jest / vitest の設定ファイルと `build.gradle(.kts)` / `pom.xml`（JaCoCo の検証タスク・`violationRules`、Kover の `koverVerify` を探す。`ENFORCEMENT_FILES` も併せて探す） |
 | `ARCH_LINT_CONFIG_FILES`, `ARCH_LINT_ENFORCE_PATTERN` | `c.arch_lint_*` | import-linter / dependency-cruiser / ArchUnit |
 | `ENFORCEMENT_FILES` | `c.arch_lint_enforced`, `e.coverage_gate_configured`, `h.data_integrity_gate_configured` | pre-commit / husky / lefthook / Taskfile / Makefile / justfile / package.json / `.github/workflows` |
@@ -185,6 +185,11 @@ GitHub からの取得は REST API（`gh api`、`gh run list`）で行うので�
 | `e.test_files_count` | 追跡されているテストファイル数（`node_modules`、仮想環境、worktree、ビルド出力を除く） | 規模の把握 |
 | `e.test_cases_count` | テストファイル内で `TEST_CASE_REGEX` に一致する行の数 | 規模の把握 |
 | `e.coverage_gate_configured` | カバレッジの下限設定（`fail-under`、`coverageThreshold`、JaCoCo の `violationRules`、Kover の `koverVerify` 等）の有無 | レベル 3 の候補 |
+
+**モノレポ・多言語リポジトリでの設定例**：
+サブパッケージが複数存在するモノレポ（pnpm ワークスペース、Cargo ワークスペース等）や、TypeScript と Rust/Go などの多言語が共存するリポジトリでは、`TEST_FILE_FIND_EXPR` で `-o` を用いて複数パターンの結合を指定します。
+- `TEST_FILE_FIND_EXPR`: `'-name "*.test.ts" -o -name "*_test.rs" -o -name "test.rs"'`
+- `TEST_CASE_REGEX`: `'test\(|it\(|#\[test\]|func Test'`
 
 ## F. デプロイ・リリース
 
