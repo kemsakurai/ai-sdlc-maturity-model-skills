@@ -1,40 +1,43 @@
 # ai-sdlc-maturity-model-skills
 
-> **English summary** — An agent skill (Claude Code `SKILL.md` format) that assesses how maturely a team uses AI across its software development lifecycle (AI-SDLC). It collects read-only evidence from a GitHub repository — git history, files, Issues, PRs and GitHub Actions runs — and scores 16 items on a fixed 7-level scale (−1 to 5) adapted from DEFRA's AI-SDLC Maturity Assessment and Gigacore's AI-Maturity-Model. Because only what lives on GitHub counts as evidence, processes run elsewhere score low: treat the output as a draft to discuss with your team, not a final verdict. The skill, its criteria and this README are written in Japanese. Licensed under MIT.
+English | [日本語](README.ja.md)
 
-GitHub リポジトリの git 履歴・ファイル・Issue・PR・GitHub Actions の状況をもとに、AI を組み込んだソフトウェア開発ライフサイクル（AI-SDLC）の成熟度をアセスメントするエージェントスキルです。
+An agent skill that assesses how maturely a team uses AI across its software development lifecycle (AI-SDLC), based on the git history, files, Issues, PRs and GitHub Actions runs of a GitHub repository.
 
-| スキル | 呼び出し | 内容 |
+| Skill | Invocation | What it does |
 | --- | --- | --- |
-| [`assessing-ai-sdlc-maturity`](skills/assessing-ai-sdlc-maturity/SKILL.md) | `/assessing-ai-sdlc-maturity` | 固定の判定基準シート（16 項目 × 7 段階）でリポジトリを採点し、ベースラインと再評価を GitHub の親 Issue に記録する |
+| [`assessing-ai-sdlc-maturity`](skills/assessing-ai-sdlc-maturity/SKILL.md) | `/assessing-ai-sdlc-maturity` | Scores a repository against a fixed criteria sheet (16 items × 7 levels) and records the baseline and re-assessments in a parent GitHub Issue |
 
-## このスキルでできること・できないこと
+> **Language.** The skill (`SKILL.md`), its criteria sheet and the generated reports are written in **Japanese**. This README is a translation of [`README.ja.md`](README.ja.md). The skill works on repositories in any language, but the report you get back is in Japanese.
 
-**できること**
+## What it can and cannot do
 
-- リポジトリから一次証拠（コミット、PR のレビュー状況、ワークフローの実行結果、ADR、テスト、ラベル等）を読み取り専用で集め、キー付きの JSON にまとめます。
-- その JSON を根拠に 16 項目を −1〜5 で採点し、軸ごとのスコア、全体の中央値と最小値、次のレベルへのギャップ、推奨アクションを出します。
-- 推奨アクションを、証拠キーで書いた受け入れ基準付きの Issue にします（例：`c.adr_duplicates == []`）。四半期ごとの再評価では、前回の JSON との差分から説明します。
+**What it can do**
 
-**できないこと（必ず読んでください）**
+- Reads primary evidence from the repository (commits, PR review status, workflow run results, ADRs, tests, labels and so on) read-only, and packs it into a keyed JSON.
+- Scores 16 items from −1 to 5 based on that JSON, and reports per-axis scores, the overall median and minimum, the gap to the next level, and recommended actions.
+- Turns each recommended action into an Issue with acceptance criteria written in evidence keys (for example `c.adr_duplicates == []`). In quarterly re-assessments it explains what changed by diffing against the previous JSON.
 
-- 証拠は **GitHub 上にあるものだけ** です。口頭で合意している手順、Slack や Notion などの別ツールで回しているふりかえり、社内の監視ダッシュボードといった、GitHub で管理していないプロセスは拾えません。そのようなプロセスが多いチームでは実態より **低く** 採点されるので、結果は **参考情報** として扱ってください。
-- 出力は確定した評価ではなく、**アセスメントのたたき台（ドラフト）** です。チームのメンバーと一緒に、ドラフトをもとに「この項目は実際にはこう回している」「ここは確かに弱い」と話し合う使い方をおすすめします。話し合いで分かった GitHub の外の実態は、親 Issue にコメントとして残しておくと次回の再評価で役立ちます。
+**What it cannot do (please read)**
 
-どんなレポートが出るかは、架空のリポジトリで作った [出力例](docs/example-report.md) を見てください。また、代表的な 5 つの公開 OSS（Cline, GitHub CLI, pnpm 等）での実証評価結果は [外部リポジトリ実証検証レポート](docs/external-verification.md) を参照してください。
+- Evidence is **only what lives on GitHub**. Procedures agreed verbally, retrospectives run in other tools such as Slack or Notion, and internal monitoring dashboards — any process not managed on GitHub — are invisible to it. Teams that run many such processes will be scored **lower** than reality, so treat the result as **reference information**.
+- The output is not a final verdict; it is a **draft for discussion**. We recommend going through it with your team: "this one we actually run like this", "yes, this one really is weak". Record what you learn about processes outside GitHub as a comment on the parent Issue; it helps the next re-assessment.
+- After scoring, for the items among monitoring, data management, synthetic user research, continuous improvement, value measurement and vision (G, H, M, N, O, P) where no evidence was found on GitHub, the skill **asks you once, all at once**, whether the process is run outside GitHub. Answers are only recorded in the "external operation" column; **scores do not change**. In environments where it cannot ask (cloud sessions, CI and so on) it does not ask, and notes this under "limits of the assessment".
 
-## 必要なもの
+For what a report looks like, see the [example report](docs/example-report.md), built on a fictional repository (in Japanese). For results of assessing five well-known public OSS repositories (Cline, GitHub CLI, pnpm and others), see the [external repository verification report](docs/external-verification.md).
 
-- [Claude Code](https://docs.claude.com/en/docs/claude-code)（`SKILL.md` 形式のスキルを読めるエージェント）
-- `git`、`jq`、`curl`
-- [GitHub CLI](https://cli.github.com/)（`gh`）。対象リポジトリを読める権限で `gh auth login` を済ませておく。`gh` が入っていないクラウド環境（Claude Code on the web 等）では、[公式のリリース](https://github.com/cli/cli/releases) からバイナリを取得し、環境変数 `GH_TOKEN` で認証する。証拠の収集は GraphQL API が使えない環境でも REST API で動く
-- 対象リポジトリが GitHub にあること
+## Requirements
 
-## インストール
+- [Claude Code](https://docs.claude.com/en/docs/claude-code) (or any agent that can read `SKILL.md`-format skills)
+- `git`, `jq`, `curl`
+- [GitHub CLI](https://cli.github.com/) (`gh`), authenticated with `gh auth login` using an account that can read the target repository. In cloud environments without `gh` (such as Claude Code on the web), download a binary from the [official releases](https://github.com/cli/cli/releases) and authenticate with the `GH_TOKEN` environment variable. Evidence collection also works without the GraphQL API, using the REST API.
+- The target repository must be on GitHub
 
-### ユーザースキルとして入れる（推奨）
+## Installation
 
-すべてのプロジェクトから `/assessing-ai-sdlc-maturity` で呼び出せるようになります。
+### As a user skill (recommended)
+
+This makes `/assessing-ai-sdlc-maturity` available from every project.
 
 ```sh
 git clone https://github.com/kemsakurai/ai-sdlc-maturity-model-skills.git ~/ai-sdlc-maturity-model-skills
@@ -42,106 +45,111 @@ mkdir -p ~/.claude/skills
 ln -s ~/ai-sdlc-maturity-model-skills/skills/assessing-ai-sdlc-maturity ~/.claude/skills/assessing-ai-sdlc-maturity
 ```
 
-更新は clone したディレクトリで `git pull` するだけです。symlink を使わずに `skills/assessing-ai-sdlc-maturity` ディレクトリをコピーしてもかまいません。著作権・ライセンスの表示は `SKILL.md` の末尾と `criteria.md` の「出典とライセンス」節に入っているので、コピーするときはそれらを消さないでください。
+To update, run `git pull` in the cloned directory. You may also copy the `skills/assessing-ai-sdlc-maturity` directory instead of using a symlink. The copyright and license notices are at the end of `SKILL.md` and in the "出典とライセンス" (sources and licenses) section of `criteria.md`; do not remove them when copying.
 
-### Claude Code のプラグインとして入れる
+### As a Claude Code plugin
 
 ```text
 /plugin marketplace add kemsakurai/ai-sdlc-maturity-model-skills
 /plugin install ai-sdlc-maturity@ai-sdlc-maturity
 ```
 
-プラグインとして入れた場合、呼び出し名は `/ai-sdlc-maturity:assessing-ai-sdlc-maturity` になります。
+When installed as a plugin, the invocation name is `/ai-sdlc-maturity:assessing-ai-sdlc-maturity`.
 
-### インストールせずに使う
+### Without installing
 
-クラウドのセッションなどで、利用者のホームディレクトリ（`~/.claude/skills`）に書けないときは、インストールせずに使えます。このリポジトリを作業用のディレクトリに clone し、エージェントに `skills/assessing-ai-sdlc-maturity/SKILL.md` を読ませて、その手順どおりに評価するよう頼みます。`criteria.md`・`references/`・`templates/` は `SKILL.md` からの相対パスで参照されるので、ディレクトリの構成は変えないでください。
+In cloud sessions where you cannot write to the home directory (`~/.claude/skills`), you can use the skill without installing it. Clone this repository into a working directory, ask the agent to read `skills/assessing-ai-sdlc-maturity/SKILL.md`, and have it assess following those steps. `criteria.md`, `references/` and `templates/` are referenced by relative path from `SKILL.md`, so keep the directory layout as is.
 
 ```sh
 git clone https://github.com/kemsakurai/ai-sdlc-maturity-model-skills.git /tmp/ai-sdlc-maturity-model-skills
-# エージェントへの依頼の例：
-#   /tmp/ai-sdlc-maturity-model-skills/skills/assessing-ai-sdlc-maturity/SKILL.md を読み、
-#   その手順で path/to/repo を評価して。書き込みなしで。
+# Example request to the agent:
+#   Read /tmp/ai-sdlc-maturity-model-skills/skills/assessing-ai-sdlc-maturity/SKILL.md
+#   and assess path/to/repo by those steps, in no-write mode.
 ```
 
-## 使い方
+## Usage
 
-対象リポジトリのディレクトリで Claude Code を起動して、次のように呼び出します。モデルが自動で起動することはなく、明示的に呼び出したときだけ動きます。
+Start Claude Code in the target repository's directory and invoke the skill as below. The model never starts it by itself; it runs only when you call it explicitly.
 
 ```text
-/assessing-ai-sdlc-maturity                 # カレントのリポジトリを初回評価する
-/assessing-ai-sdlc-maturity path/to/repo    # パスを指定する
-/assessing-ai-sdlc-maturity 再評価 #123      # 親 Issue #123 のベースラインと比べて再評価する
-/assessing-ai-sdlc-maturity 再評価 ./assessment-2026-09-25.json  # ファイルに保存したベースラインと比べる
-/assessing-ai-sdlc-maturity 書き込みなし     # 対象リポジトリにも GitHub にも書き込まずに評価する
+/assessing-ai-sdlc-maturity                 # first assessment of the current repository
+/assessing-ai-sdlc-maturity path/to/repo    # specify a path
+/assessing-ai-sdlc-maturity reassess #123   # re-assess against the baseline in parent Issue #123
+/assessing-ai-sdlc-maturity reassess ./assessment-2026-09-25.json  # compare with a baseline saved to a file
+/assessing-ai-sdlc-maturity no-write        # assess without writing to the repository or to GitHub
 ```
 
-初回の流れは次のとおりです。
+The keywords have Japanese equivalents: `再評価` for `reassess` and `書き込みなし` for `no-write`. Both forms are accepted.
 
-1. リポジトリの構成（言語、テストの書き方、pre-commit・タスクランナー・CI、ADR の場所、ラベル体系など）を調べ、同梱のテンプレートから、そのリポジトリ専用の証拠収集スクリプト（既定は `scripts/ai-sdlc/collect-evidence.sh`）を生成します。配置先は実行時に確認されます。生成したパスは、エージェント向けの指示書（`AGENTS.md` / `CLAUDE.md` など。無ければ README）に 1 行記録されます。
-2. スクリプトを実行して証拠の JSON を得ます。スクリプトは読み取り専用で、`.env` には触れません。既定の集計期間は 90 日です。
-3. `criteria.md` に沿って採点し、結果を出力します。
-4. 結果と JSON を GitHub の親 Issue に記録し、推奨アクションを 1 件ずつ Issue にします。書き込む前に、投稿先と内容が示されて確認を求められます。Issue に記録しないときは、JSON とレポートをファイル（`assessment-<評価日>.json` / `.md`）に保存でき、次回の再評価でそのパスを渡せます。
+The first run goes as follows.
 
-生成されたスクリプトはリポジトリにコミットしてください。次回からはそれを使うので、再評価で同じ物差しを保てます。スクリプトのヘッダーには MIT の著作権表示が入っています。コミットするときも残してください。
+1. It inspects the repository's layout (languages, how tests are written, pre-commit, task runner and CI, ADR location, label scheme and so on), and from the bundled template generates an evidence-collection script specific to that repository (default `scripts/ai-sdlc/collect-evidence.sh`). The destination is confirmed at run time. The generated path is recorded in one line in the agent instructions file (`AGENTS.md`, `CLAUDE.md` and so on; the README if there is none).
+2. It runs the script to get the evidence JSON. The script is read-only and never touches `.env`. The default window is 90 days.
+3. It scores the repository against `criteria.md`.
+4. For items among G, H, M, N, O and P where no evidence was found on GitHub, it asks whether the process is run outside GitHub. Answers are recorded in the "external operation" column of the scoring table (`申告あり` = declared, `申告なし` = not declared) and do not change the score. On a re-assessment it shows your previous answers and asks whether anything changed.
+5. It outputs the result.
+6. It records the result and the JSON in a parent GitHub Issue, and files each recommended action as an Issue. Before writing, it shows the destination and the content and asks for confirmation. If you do not want to record to Issues, it can save the JSON and the report to files (`assessment-<date>.json` / `.md`), and you pass that path in the next re-assessment.
 
-リポジトリに書き込めない、または書き込みたくないときは「書き込みなし」で呼び出します。スクリプトはリポジトリの外に一時的に生成され、指示書への追記も Issue の作成もしません。スクリプトに埋めた設定値は証拠 JSON の `header.config` に残るので、次回も同じ物差しでスクリプトを再生成できます。なお、外部リポジトリを一時ディレクトリ等に clone して評価する際、対象リポジトリが Git LFS を利用していると環境によって checkout が中断することがあるため、`GIT_LFS_SKIP_SMUDGE=1 git clone --depth 100 <URL> <一時ディレクトリ>` で取得することを推奨します。
+Commit the generated script to the repository. Later runs reuse it, which keeps the yardstick the same across re-assessments. The script header carries an MIT copyright notice; keep it when you commit.
 
-評価するのは、手元のチェックアウトで git が追跡しているファイルです。手元が既定ブランチの最新より古いと、最近追加された指示書などが欠けます。スキルは実行前にずれを確かめ、必要なら最新の既定ブランチを一時的な worktree に取り出して評価します（作業ツリーには触れません）。
+When you cannot, or do not want to, write to the repository, call it with `no-write`. The script is generated temporarily outside the repository, and nothing is appended to the instructions file and no Issue is created. The settings embedded in the script are kept in the evidence JSON under `header.config`, so the same script can be regenerated next time with the same yardstick. When assessing an external repository by cloning it into a temporary directory, a checkout can abort in some environments if the repository uses Git LFS, so we recommend fetching with `GIT_LFS_SKIP_SMUDGE=1 git clone --depth 100 <URL> <temporary directory>`.
 
-### GitHub への書き込みと個人名について
+What gets assessed is the files git tracks in your local checkout. If your checkout is behind the latest default branch, recently added instructions files and the like will be missing. The skill checks for this drift before running and, if needed, checks out the latest default branch into a temporary worktree and assesses that (your working tree is left untouched).
 
-- このスキルは、対象リポジトリに **Issue を作成し、コメントを投稿します**。Issue を作れる権限で `gh auth login` している必要があります。書き込みは毎回、実行前に確認されます。
-- 証拠 JSON には、コミット著者名（`header.authors_top5`）と PR 作成者のログイン名（`l.pr_authors_window`）が含まれます。Public リポジトリでは、これらを `author-1` のような仮の名前に置き換えて収集します（証拠収集スクリプトの `--anonymize-authors`）。件数や順位はそのまま残ります。
-- 他人が管理するリポジトリで使うときは、Issue を作る前にメンテナーの了解を得てください。
+### Writing to GitHub and personal names
 
-## 採点の考え方
+- This skill **creates Issues and posts comments** in the target repository. You need to be logged in with `gh auth login` using an account that can create Issues. Every write is confirmed before it is performed.
+- The evidence JSON includes commit author names (`header.authors_top5`) and PR author logins (`l.pr_authors_window`). For public repositories these are replaced with placeholder names such as `author-1` when collected (`--anonymize-authors` of the evidence-collection script). Counts and rankings are kept.
+- When using it on a repository someone else maintains, get the maintainers' approval before creating Issues.
 
-- **尺度**：−1（抵抗）/ 0（場当たり）/ 1（探索）/ 2（構造化）/ 3（確立）/ 4（統合）/ 5（変革）の 7 段階。1 から連続して満たした最高レベルがその項目のスコアです。
-- **存在と運用は区別します**：ルールやワークフローが「ある」だけならレベル 2 止まりです。レベル 3 以上には、実行の実績（成功した実行の件数、日付、ログ）が必要です。
-- **全体スコア**は、全項目の中央値と最小値（階層準拠）を併記します。最小値を決めている項目が、いちばん大きな運用リスクです。
-- 判定基準の全文は [`criteria.md`](skills/assessing-ai-sdlc-maturity/criteria.md)、証拠キーの意味は [`references/evidence-keys.md`](skills/assessing-ai-sdlc-maturity/references/evidence-keys.md) にあります。
+## How scoring works
 
-## 構成
+- **Scale**: seven levels — −1 (resistant) / 0 (ad hoc) / 1 (exploring) / 2 (structured) / 3 (established) / 4 (integrated) / 5 (transformative). An item's score is the highest level reached by meeting the criteria consecutively from level 1.
+- **Existence and operation are distinguished**: a rule or workflow that merely "exists" caps at level 2. Level 3 and above need evidence of execution (counts of successful runs, dates, logs).
+- **The overall score** reports both the median across all items and the minimum (tiered compliance). The item that sets the minimum is the largest operational risk.
+- The full criteria are in [`criteria.md`](skills/assessing-ai-sdlc-maturity/criteria.md) (Japanese), and the meaning of each evidence key is in [`references/evidence-keys.md`](skills/assessing-ai-sdlc-maturity/references/evidence-keys.md).
+
+## Layout
 
 ```text
 .
-├── .claude-plugin/            # Claude Code プラグイン / マーケットプレイスの定義
-├── .github/workflows/test.yml # CI（shellcheck と tests/ の実行）
+├── .claude-plugin/            # Claude Code plugin / marketplace definitions
+├── .github/workflows/test.yml # CI (shellcheck and running tests/)
 ├── docs/
-│   └── example-report.md      # 出力例（架空のリポジトリ）
+│   └── example-report.md      # example output (fictional repository)
 ├── tests/
-│   ├── template_test.sh       # 証拠収集テンプレートの回帰テスト
-│   └── consistency_test.sh    # 版番号・証拠キーのファイル間の整合性チェック
+│   ├── template_test.sh       # regression tests for the evidence-collection template
+│   └── consistency_test.sh    # cross-file consistency checks for versions and evidence keys
 ├── skills/
 │   └── assessing-ai-sdlc-maturity/
-│       ├── SKILL.md           # スキル本体（手順）
-│       ├── criteria.md        # 判定基準シート
+│       ├── SKILL.md           # the skill itself (steps)
+│       ├── criteria.md        # criteria sheet
 │       ├── references/
 │       │   └── evidence-keys.md
 │       └── templates/
 │           ├── collect-evidence.template.sh
-│           └── report.template.md   # レポートの雛形
+│           └── report.template.md   # report template
 ├── CHANGELOG.md
 ├── LICENSE                    # MIT License
-├── README.md
-└── THIRD_PARTY_NOTICES.md     # 参照・改変した第三者資料とそのライセンス
+├── README.md                  # English (this file)
+├── README.ja.md               # Japanese
+└── THIRD_PARTY_NOTICES.md     # third-party material referenced or adapted, and its licenses
 ```
 
-## バージョン
+## Versioning
 
-[Semantic Versioning](https://semver.org/lang/ja/) に従います。スキル本体と判定基準シートは 1 つの版番号を共有し、証拠 JSON の `header.skill_version` と `header.criteria_version` には常に同じ値が入ります。
+This project follows [Semantic Versioning](https://semver.org/). The skill and the criteria sheet share a single version number, and `header.skill_version` and `header.criteria_version` in the evidence JSON always hold the same value.
 
-- **patch**（例：0.1.0 → 0.1.1）：判定基準の文言は変えません。証拠の収集方法の修正や文書の手直しです。patch だけが違う版どうしの採点は比較できます。
-- **minor 以上**（例：0.1.x → 0.2.0）：判定基準の文言や項目を変えます。以前の採点とは、そのままでは比較できません。
+- **patch** (e.g. 0.1.0 → 0.1.1): the wording of the criteria does not change. Fixes to how evidence is collected, or documentation touch-ups. Scores from versions that differ only in patch are comparable.
+- **minor and above** (e.g. 0.1.x → 0.2.0): the wording or items of the criteria change. Scores cannot be compared with earlier ones as is.
 
-変更履歴は [`CHANGELOG.md`](CHANGELOG.md) を参照してください。
+See [`CHANGELOG.md`](CHANGELOG.md) (Japanese) for the change history.
 
-## 出典とライセンス
+## Sources and license
 
-このリポジトリのコードと文書は [MIT License](LICENSE) で公開しています。ただし、以下の第三者の資料はそれぞれの権利者とライセンスに従います。詳しくは [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) を参照してください。
+The code and documents in this repository are released under the [MIT License](LICENSE). The third-party materials below, however, remain under their respective owners and licenses. See [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) for details.
 
-- **DEFRA「AI-SDLC Maturity Assessment」**（<https://github.com/DEFRA/ai-sdlc-maturity-assessment>）：7 段階の尺度、次元の名前、階層準拠の採点法を参照しています。項目別の判定基準は、各次元ページにある Sample assessment questions の観点を参考にし、文言は独自に書き起こしたものです。DEFRA の文章は収録していないので、原文はリンク先を参照してください。
-- **Gigacore「AI-Maturity-Model」**（<https://github.com/Gigacore/AI-Maturity-Model>、[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)）：6 つの軸とレベル名を、日本語化して項目に対応づけるという改変を加えて使っています。
+- **DEFRA "AI-SDLC Maturity Assessment"** (<https://github.com/DEFRA/ai-sdlc-maturity-assessment>): the seven-level scale, dimension names and the tiered-compliance scoring method are referenced. The per-item criteria take their viewpoints from the "Sample assessment questions" on each dimension page, but the wording is original. DEFRA's text is not reproduced; see the linked source for the original.
+- **Gigacore "AI-Maturity-Model"** (<https://github.com/Gigacore/AI-Maturity-Model>, [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)): the six axes and level names are used with modifications — translated into Japanese and mapped onto the items.
 
-このスキルは DEFRA とも Gigacore とも無関係の非公式なものです。
+This skill is unofficial and is not affiliated with DEFRA or Gigacore.

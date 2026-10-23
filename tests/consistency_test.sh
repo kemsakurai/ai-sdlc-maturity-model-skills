@@ -51,5 +51,13 @@ echo "     template=$N_TPL evidence-keys.md=$(printf '%s\n' "$KEYS_DOC" | grep -
 if [ "$KEYS_TPL" = "$KEYS_DOC" ]; then pass "テンプレートと evidence-keys.md のキーが一致"; else fail "テンプレートと evidence-keys.md のキーが一致"; diff <(printf '%s\n' "$KEYS_TPL") <(printf '%s\n' "$KEYS_DOC") | sed 's/^/     /'; fi
 if [ "$KEYS_TPL" = "$KEYS_CRIT" ]; then pass "テンプレートと criteria.md のキーが一致"; else fail "テンプレートと criteria.md のキーが一致"; diff <(printf '%s\n' "$KEYS_TPL") <(printf '%s\n' "$KEYS_CRIT") | sed 's/^/     /'; fi
 
+# --- README（英語版と日本語版） -----------------------------------------------
+N_H2_EN="$(grep -c '^## ' "$ROOT/README.md")"
+N_H2_JA="$(grep -c '^## ' "$ROOT/README.ja.md")"
+echo "     README.md=$N_H2_EN README.ja.md=$N_H2_JA (## 見出しの数)"
+if [ "$N_H2_EN" = "$N_H2_JA" ]; then pass "README.md と README.ja.md の ## 見出しの数が一致"; else fail "README.md と README.ja.md の ## 見出しの数が一致"; fi
+if grep -qF '(README.ja.md)' "$ROOT/README.md"; then pass "README.md から README.ja.md へのリンクがある"; else fail "README.md から README.ja.md へのリンクがある"; fi
+if grep -qF '(README.md)' "$ROOT/README.ja.md"; then pass "README.ja.md から README.md へのリンクがある"; else fail "README.ja.md から README.md へのリンクがある"; fi
+
 if [ "$FAILED" -ne 0 ]; then echo "テストに失敗しました"; exit 1; fi
 echo "すべてのテストに合格しました"

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# 証拠収集スクリプト（読み取り専用、criteria.md 0.3.0 準拠）
+# 証拠収集スクリプト（読み取り専用、criteria.md 0.3.1 準拠）
 # このファイルは assessing-ai-sdlc-maturity スキルによりプロジェクト固有に生成されました。
 # https://github.com/kemsakurai/ai-sdlc-maturity-model-skills
 #
@@ -27,8 +27,8 @@ set -u
 # （git の既定は core.quotePath=true で、そのままだと ls-files / grep の出力とパスの照合が一致しない）
 git() { command git -c core.quotePath=false "$@"; }
 
-CRITERIA_VERSION="0.3.0"
-SKILL_VERSION="0.3.0"
+CRITERIA_VERSION="0.3.1"
+SKILL_VERSION="0.3.1"
 # このスクリプト自身とテンプレートは、設定ファイルの grep の対象から外す（自分の本文にある検索語に一致しないように）
 SELF_NAME="$(basename "$0")"
 TEMPLATE_NAME="collect-evidence.template.sh"
