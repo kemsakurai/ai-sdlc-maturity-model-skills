@@ -118,14 +118,17 @@ What gets assessed is the files git tracks in your local checkout. If your check
 ├── docs/
 │   └── example-report.md      # example output (fictional repository)
 ├── tests/
-│   ├── template_test.sh       # regression tests for the evidence-collection template
-│   └── consistency_test.sh    # cross-file consistency checks for versions and evidence keys
+│   ├── template_test.sh          # regression tests for the evidence-collection template
+│   ├── verify_assessment_test.sh # regression tests for score aggregation and evidence checks
+│   └── consistency_test.sh       # cross-file consistency checks for versions and evidence keys
 ├── skills/
 │   └── assessing-ai-sdlc-maturity/
-│       ├── SKILL.md           # the skill itself (steps)
-│       ├── criteria.md        # criteria sheet
+│       ├── SKILL.md              # the skill itself (steps)
+│       ├── criteria.md           # criteria sheet
 │       ├── references/
 │       │   └── evidence-keys.md
+│       ├── scripts/
+│       │   └── verify-assessment.sh # score aggregation and evidence sanity checks
 │       └── templates/
 │           ├── collect-evidence.template.sh
 │           └── report.template.md   # report template

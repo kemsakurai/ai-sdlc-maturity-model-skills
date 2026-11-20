@@ -2,6 +2,22 @@
 
 このプロジェクトは [Semantic Versioning](https://semver.org/lang/ja/) に従います。スキル本体と判定基準シートは 1 つの版番号を共有します。`criteria.md` の判定基準を変えたときは、以前の採点と比較できなくなるので、少なくともマイナーバージョンを上げます。patch だけが違う版どうしの採点は比較できます。
 
+## [0.3.2] - 2026-11-20
+
+Private リポジトリ（`kemsakurai/scrum-graph.dev`、旧名 `scrum-guides`）での 11/16 実証評価（[kemsakurai/scrum-guides#4288](https://github.com/kemsakurai/scrum-guides/issues/4288)）のフィードバックに対応しました。`criteria.md` の各レベルの基準文言自体は変えていないため patch バージョンとし、0.3.0 / 0.3.1 の採点と比較できます。
+
+### 追加
+
+- `skills/assessing-ai-sdlc-maturity/scripts/verify-assessment.sh`（およびテスト `tests/verify_assessment_test.sh`）を加えた。16 項目（A〜P）のスコアから N/A を除いた全体の中央値・平均・最小値（階層準拠）と軸別サマリを自動計算・検算し、証拠 JSON の未取得キー（`value == null`）・取得上限到達（`value >= limit`、`f.deploy_runs` のワークフロー別合計等）・件数矛盾（`c.adr_count < p.adr_recent_count_window` 等）を検出する。
+- `header.repository_input` を追加し、改名・リダイレクトされたリポジトリの入力名と解決後の正式名（`header.repository`）を追跡できるようにした。
+- `SKILL.md`：既存のプロジェクト収集器を使う際の互換性検査（`header.criteria_version` / `header.skill_version` と必須キーの確認、更新・補完・保留の判断手順、証拠 JSON の版番号を手で書き換えて整合したように見せない規定）を加えた。
+- `criteria.md` / `SKILL.md` / `templates/report.template.md`：手動確認が必要な質的条件（M・L・O 等）の証拠形式（出どころ・対象期間・判定の 3 要素）と、廃止済みゲート・指標（例：`pbi-lint` 廃止）の過去実績だけで現在の運用レベルを上げない採点ルールを明記した。
+
+### 修正
+
+- `collect-evidence.template.sh`：疎通確認の `repos/<owner/name>` が返す `.full_name` でリポジトリ正式名を解決し、以降の検索・一覧・Actions・`gh pr list`（`-R` 明示）をすべて正式名へ向けるようにした。環境変数 `GH_REPO` による明示指定にも対応した。
+- `collect-evidence.template.sh`：GraphQL（`gh pr list`）失敗後の REST フォールバック（`l_merged_prs_rest`）で、検索 API の PR 一覧が取得できた後に PR ごとの詳細（`additions` / `reviews`）が部分失敗した場合、取得済みの `l.pr_authors_window` は保持し、詳細が欠けた `l.pr_review_stats_window` と `l.ai_pr_stats_window` だけを `null` と `error` にする（0 にしない）ようにした。
+
 ## [0.3.1] - 2026-10-23
 
 README を英語にし、GitHub の外で運用している工程を評価の最後にユーザーへ尋ねるようにした。`criteria.md` の判定基準の文言は変えていないので、patch バージョンとした。0.3.0 の採点と比較できる。
