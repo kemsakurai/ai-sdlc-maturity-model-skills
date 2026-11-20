@@ -103,6 +103,9 @@ case "${FAKE_GH_MODE:-unauth}" in
   redirect)
     if [[ "$*" == *"repos/example/old-repo "* ]]; then succeed "$@"; fi
     if [[ "$*" == *"example/old-repo"* ]]; then echo "fake gh: unredirected old-repo in $*" >&2; exit 1; fi
+    if { [ "$1 $2" = "pr list" ] || [ "$1 $2" = "run list" ]; } && [[ "$*" != *"-R example/repo"* ]]; then
+      echo "fake gh: missing -R example/repo in $*" >&2; exit 1
+    fi
     succeed "$@"
     ;;
   partial_l)

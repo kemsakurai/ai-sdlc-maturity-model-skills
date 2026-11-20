@@ -25,15 +25,18 @@ EVIDENCE_FILE=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --scores)
-      SCORES_FILE="${2:-}"
+      [ $# -ge 2 ] || { echo "エラー: --scores にはファイルパスが必要です" >&2; exit 1; }
+      SCORES_FILE="$2"
       shift 2
       ;;
     --scores-json)
-      SCORES_JSON="${2:-}"
+      [ $# -ge 2 ] || { echo "エラー: --scores-json には JSON 文字列が必要です" >&2; exit 1; }
+      SCORES_JSON="$2"
       shift 2
       ;;
     --evidence)
-      EVIDENCE_FILE="${2:-}"
+      [ $# -ge 2 ] || { echo "エラー: --evidence にはファイルパスが必要です" >&2; exit 1; }
+      EVIDENCE_FILE="$2"
       shift 2
       ;;
     -h|--help)
@@ -190,6 +193,12 @@ if [ -n "$EVIDENCE_FILE" ]; then
       .key as $k | .value.limit as $lim | .value.value as $v |
       if ($v | type) == "number" and ($v >= $lim) then
         [{key: $k, observed: $v, limit: $lim, reason: "value reached limit"}]
+      elif $k == "l.pr_authors_window" and (($v | type) == "array") then
+        ([$v[].count // 0] | add // 0) as $author_total |
+        if $author_total >= $lim then
+          [{key: $k, observed: $author_total, limit: $lim, reason: "summed PR author counts reached limit"}]
+        else []
+        end
       elif ($v | type) == "array" and (($v | length) >= $lim) then
         [{key: $k, observed: ($v | length), limit: $lim, reason: "array length reached limit"}]
       elif $k == "f.deploy_runs" and (($v | type) == "object") then
