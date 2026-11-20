@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# 証拠収集スクリプト（読み取り専用、criteria.md 0.3.1 準拠）
+# 証拠収集スクリプト（読み取り専用、criteria.md 0.3.2 準拠）
 # このファイルは assessing-ai-sdlc-maturity スキルによりプロジェクト固有に生成されました。
 # https://github.com/kemsakurai/ai-sdlc-maturity-model-skills
 #
@@ -27,8 +27,8 @@ set -u
 # （git の既定は core.quotePath=true で、そのままだと ls-files / grep の出力とパスの照合が一致しない）
 git() { command git -c core.quotePath=false "$@"; }
 
-CRITERIA_VERSION="0.3.1"
-SKILL_VERSION="0.3.1"
+CRITERIA_VERSION="0.3.2"
+SKILL_VERSION="0.3.2"
 # このスクリプト自身とテンプレートは、設定ファイルの grep の対象から外す（自分の本文にある検索語に一致しないように）
 SELF_NAME="$(basename "$0")"
 TEMPLATE_NAME="collect-evidence.template.sh"
@@ -150,7 +150,9 @@ CONFIG_VARS="ADR_DIR CHANGELOG_FILE RULE_HISTORY_FILES RULE_FILES_REGEX TEST_FIL
 
 TMP_JSONL="$(mktemp)"
 GH_ERR_FILE="$(mktemp)"
-trap 'rm -f "$TMP_JSONL" "$GH_ERR_FILE"' EXIT
+L_REST_ITEMS_FILE="$(mktemp)"
+L_DETAIL_ERR_FILE="$(mktemp)"
+trap 'rm -f "$TMP_JSONL" "$GH_ERR_FILE" "$L_REST_ITEMS_FILE" "$L_DETAIL_ERR_FILE"' EXIT
 
 RUN_TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 ASSESSED_DATE="$(date -u +%Y-%m-%d)"
@@ -286,14 +288,20 @@ gh_int_key() {
   fi
 }
 
-# 対象の owner/name は git のリモート（origin、無ければ最初のリモート）から決める。
+# 対象の owner/name は環境変数 GH_REPO があればそれを使い、無ければ git のリモート（origin、無ければ最初のリモート）から決める。
+# 改名・リダイレクトされている場合に備え、疎通確認の REST API (repos/<owner/name>) が返す .full_name で正式名を解決する。
 # gh repo view は GraphQL API を使うので、GraphQL が使えない環境でも動くように使わない。
-REPO_REMOTE="$(git remote get-url origin 2>/dev/null || true)"
-if [ -z "$REPO_REMOTE" ]; then
-  FIRST_REMOTE="$(git remote | head -1)"
-  [ -n "$FIRST_REMOTE" ] && REPO_REMOTE="$(git remote get-url "$FIRST_REMOTE" 2>/dev/null || true)"
+REPO_INPUT="${GH_REPO:-}"
+if [ -z "$REPO_INPUT" ]; then
+  REPO_REMOTE="$(git remote get-url origin 2>/dev/null || true)"
+  if [ -z "$REPO_REMOTE" ]; then
+    FIRST_REMOTE="$(git remote | head -1)"
+    [ -n "$FIRST_REMOTE" ] && REPO_REMOTE="$(git remote get-url "$FIRST_REMOTE" 2>/dev/null || true)"
+  fi
+  REPO_INPUT="$(printf '%s' "$REPO_REMOTE" | sed -E 's#/+$##; s#\.git$##; s#.*[:/]([^/]+/[^/]+)$#\1#')"
 fi
-REPO_NWO="$(printf '%s' "$REPO_REMOTE" | sed -E 's#/+$##; s#\.git$##; s#.*[:/]([^/]+/[^/]+)$#\1#')"
+REPO_NWO="$REPO_INPUT"
+REPO_REDIRECTED=0
 
 # 最初に gh を使えるか（インストール済み・認証済みで、対象が GitHub のリポジトリか）を REST API で確かめる。
 # 使えないときは、GitHub 由来のキーを再試行せずにすべて「取得できなかった」と記録する。
@@ -303,8 +311,12 @@ if ! command -v gh >/dev/null 2>&1; then
   GH_UNAVAILABLE_REASON="gh command not found"
 elif [ -z "$REPO_NWO" ]; then
   GH_UNAVAILABLE_REASON="no git remotes found"
-elif gh_retry api "repos/$REPO_NWO" --jq .full_name >/dev/null; then
+elif RESOLVED_NWO="$(gh_retry api "repos/$REPO_NWO" --jq .full_name)" && [ -n "$RESOLVED_NWO" ]; then
   GH_AVAILABLE=1
+  if [ "$RESOLVED_NWO" != "$REPO_NWO" ]; then
+    REPO_NWO="$RESOLVED_NWO"
+    REPO_REDIRECTED=1
+  fi
 else
   GH_UNAVAILABLE_REASON="$(gh_last_error)"
 fi
@@ -595,7 +607,7 @@ for w in $DEPLOY_FILES; do
     F_DEPLOY_RUNS_FAILURE="$(gh_failure_reason)"
     break
   fi
-  if ! CONCLUSIONS="$(gh_retry run list --workflow "$w" --created ">=$WINDOW_START" -L "$GH_LIMIT" --json conclusion -q '.[].conclusion')"; then
+  if ! CONCLUSIONS="$(gh_retry run list -R "$REPO_NWO" --workflow "$w" --created ">=$WINDOW_START" -L "$GH_LIMIT" --json conclusion -q '.[].conclusion')"; then
     F_DEPLOY_RUNS_FAILURE="$w: $(gh_last_error)"
     break
   fi
@@ -746,20 +758,33 @@ emit "k.coauthored_ratio_window" "git log --no-merges --since=<window-start>: co
 # bot のログインは GraphQL の表記（app/<name>）にそろえる（REST では <name>[bot] になる）。
 l_merged_prs_graphql() {
   local out
-  out="$(gh_retry pr list --state merged --search "merged:>=$WINDOW_START" --json reviews,comments,additions,author -L "$GH_LIMIT")" || return 1
+  out="$(gh_retry pr list -R "$REPO_NWO" --state merged --search "merged:>=$WINDOW_START" --json reviews,comments,additions,author -L "$GH_LIMIT")" || return 1
   printf '%s' "$out" | jq -c '[.[] | {reviews: (.reviews | length), comments: (.comments | length), additions, author: .author.login,
     rv: [.reviews[] | {login: (.author.login // ""), state, at: (.submittedAt // "")}]}]'
 }
+# REST フォールバック: search/issues で一覧を取得し、各 PR の詳細（additions / reviews）を取得する。
+# 一覧が取れれば作成者情報（L_REST_ITEMS_FILE）は確定できるため、詳細取得で部分失敗しても l.pr_authors_window は保持する。
+# $(...) サブシェルから親シェルへ結果とエラーを渡すため、一時ファイルに書き出す。
 l_merged_prs_rest() {
-  local items line num additions reviews rows=""
+  local items line num additions reviews_raw reviews rows=""
+  : > "$L_REST_ITEMS_FILE"
+  : > "$L_DETAIL_ERR_FILE"
   items="$(gh_retry api -X GET --paginate search/issues -f q="repo:$REPO_NWO type:pr is:merged merged:>=$WINDOW_START" -f per_page=100 \
     --jq '.items[] | {number, comments, author: (if .user.type == "Bot" then "app/" + (.user.login | sub("\\[bot\\]$"; "")) else .user.login end)} | @json')" || return 1
+  printf '%s\n' "$items" | head -n "$GH_LIMIT" | jq -s -c '.' > "$L_REST_ITEMS_FILE"
   while IFS= read -r line; do
     [ -n "$line" ] || continue
     num="$(printf '%s' "$line" | jq '.number')"
-    additions="$(gh_retry api "repos/$REPO_NWO/pulls/$num" --jq .additions)" || return 1
-    reviews="$(gh_retry api "repos/$REPO_NWO/pulls/$num/reviews?per_page=100" \
-      --jq '[.[] | {login: (if .user.type == "Bot" then "app/" + (.user.login | sub("\\[bot\\]$"; "")) else .user.login end), state, at: (.submitted_at // "")}]')" || return 1
+    if ! additions="$(gh_retry api "repos/$REPO_NWO/pulls/$num" --jq .additions)"; then
+      printf 'PR #%s additions: %s' "$num" "$(gh_last_error)" > "$L_DETAIL_ERR_FILE"
+      return 1
+    fi
+    if ! reviews_raw="$(gh_retry api --paginate "repos/$REPO_NWO/pulls/$num/reviews?per_page=100" \
+      --jq '.[] | {login: (if .user.type == "Bot" then "app/" + (.user.login | sub("\\[bot\\]$"; "")) else .user.login end), state, at: (.submitted_at // "")}')"; then
+      printf 'PR #%s reviews: %s' "$num" "$(gh_last_error)" > "$L_DETAIL_ERR_FILE"
+      return 1
+    fi
+    reviews="$(printf '%s\n' "$reviews_raw" | jq -s -c '.')"
     rows+="$(printf '%s' "$line" | jq -c --argjson a "$(json_int "$additions")" --argjson rv "$reviews" \
       '{reviews: ($rv | length), comments, additions: $a, author, rv: $rv}')"$'\n'
   done <<< "$(printf '%s\n' "$items" | head -n "$GH_LIMIT")"
@@ -767,12 +792,19 @@ l_merged_prs_rest() {
 }
 
 L_ROUTE=""
+L_AUTHORS_ROUTE=""
+L_REST_ITEMS=""
+L_DETAIL_ERROR=""
 if [ "$GH_AVAILABLE" != "1" ]; then
   :
 elif L_MERGED_PRS="$(l_merged_prs_graphql)"; then
   L_ROUTE="gh pr list --state merged --search 'merged:>=<window-start>' (GraphQL)"
 elif L_MERGED_PRS="$(l_merged_prs_rest)"; then
   L_ROUTE="gh api search/issues 'type:pr is:merged merged:>=<window-start>' + pulls/{n} + pulls/{n}/reviews (REST)"
+elif [ -s "$L_REST_ITEMS_FILE" ]; then
+  L_REST_ITEMS="$(cat "$L_REST_ITEMS_FILE")"
+  L_DETAIL_ERROR="$(cat "$L_DETAIL_ERR_FILE" 2>/dev/null || true)"
+  L_AUTHORS_ROUTE="gh api search/issues 'type:pr is:merged merged:>=<window-start>' (REST)"
 fi
 AI_REVIEWER_PTN="${AI_REVIEWER_REGEX:-copilot|coderabbit|claude|gemini|codex|cursor|devin|sourcery|qodo|greptile|ellipsis}"
 AI_AGENT_PTN="${AI_AGENT_LOGIN_REGEX:-copilot|devin|claude|codex|cursor|jules|openhands|sweep|gemini}"
@@ -795,6 +827,14 @@ if [ -n "$L_ROUTE" ]; then
   emit "l.pr_review_stats_window" "$L_ROUTE: review stats" "$GH_LIMIT" "$L_PR_STATS_JSON"
   emit "l.pr_authors_window" "$L_ROUTE: authors" "$GH_LIMIT" "$L_PR_AUTHORS_JSON"
   emit "l.ai_pr_stats_window" "$L_ROUTE: AI-authored / AI-reviewed / human-approved-after-AI-review PRs" "$GH_LIMIT" "$L_AI_STATS_JSON"
+elif [ -n "$L_AUTHORS_ROUTE" ]; then
+  L_PR_AUTHORS_JSON="$(printf '%s' "$L_REST_ITEMS" | jq -r '.[].author' | \
+    sort | uniq -c | sort -rn | uniq_c_to_array author | anonymize_authors pr-author)"
+  L_HUMAN_PR_AUTHORS="$(printf '%s' "$L_REST_ITEMS" | jq --arg bot "$BOT_NAME_REGEX" '[.[].author | select(test($bot; "i") | not)] | unique | length')"
+  L_FAILURE_REASON="${L_DETAIL_ERROR:-$(gh_failure_reason)}"
+  emit_gh_failure "l.pr_review_stats_window" "gh pr list / gh api: merged PR review stats in window" "$GH_LIMIT" "$L_FAILURE_REASON"
+  emit "l.pr_authors_window" "$L_AUTHORS_ROUTE: authors" "$GH_LIMIT" "$L_PR_AUTHORS_JSON"
+  emit_gh_failure "l.ai_pr_stats_window" "gh pr list / gh api: AI involvement in merged PRs in window" "$GH_LIMIT" "$L_FAILURE_REASON"
 else
   L_FAILURE_REASON="$(gh_failure_reason)"
   emit_gh_failure "l.pr_review_stats_window" "gh pr list / gh api: merged PR review stats in window" "$GH_LIMIT" "$L_FAILURE_REASON"
@@ -880,6 +920,7 @@ CONFIG_JSON="$(for n in $CONFIG_VARS; do printf '%s\t%s\n' "$n" "${!n}"; done | 
 
 jq -n \
   --arg repo "$REPO_NWO" \
+  --arg repo_input "$REPO_INPUT" \
   --arg head "$HEAD_SHA" \
   --arg branch "$CURRENT_BRANCH" \
   --arg default_branch "$DEFAULT_BRANCH" \
@@ -906,6 +947,7 @@ jq -n \
   {
     header: {
       repository: $repo,
+      repository_input: ($repo_input | nz),
       head_sha: $head,
       evaluated_ref: {
         branch: ($branch | nz),
@@ -935,6 +977,9 @@ jq -n \
 
 # 評価したコミットが既定ブランチの最新と違えば、標準エラーに知らせる（出力 JSON は壊さない）
 {
+  if [ "$REPO_REDIRECTED" = "1" ]; then
+    echo "警告: リポジトリ名が ${REPO_INPUT} から ${REPO_NWO} に解決されたため、正式名で取得しました。"
+  fi
   if [ "$BEHIND_DEFAULT" != "null" ] && [ "$BEHIND_DEFAULT" -gt 0 ]; then
     echo "警告: HEAD は origin/$DEFAULT_BRANCH より $BEHIND_DEFAULT コミット遅れています（最終 fetch: ${LAST_FETCH_AT:-不明}）。最新を評価するなら fetch してから origin/$DEFAULT_BRANCH を別の worktree に取り出して実行してください。"
   fi

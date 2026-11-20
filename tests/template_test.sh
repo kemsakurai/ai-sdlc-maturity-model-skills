@@ -36,6 +36,8 @@ N_LOCAL_KEYS=38
 #   down      : 最初の疎通確認だけ成功し、ほかは常に HTTP 502 で失敗する（継続的な失敗）
 #   notfound  : 最初の疎通確認だけ成功し、ほかは常に HTTP 404 で失敗する（再試行しても直らない失敗）
 #   nographql : GraphQL を使う gh pr list だけ HTTP 403 で失敗し、REST は成功する（Claude Code on the web 等）
+#   redirect  : repos/example/old-repo が example/repo を返し、以降の API は example/repo でだけ成功する
+#   partial_l : GraphQL が 502 で失敗し、REST の検索一覧は成功するが pulls/*/reviews が 502 で失敗する（部分失敗）
 mkdir -p "$WORK/bin"
 cat > "$WORK/bin/gh" <<'FAKE_GH'
 #!/usr/bin/env bash
@@ -47,6 +49,7 @@ echo "$*" >> "$FAKE_GH_LOG"
 # PR 7（bob）は AI のレビューの後に人が承認。PR 8 は AI エージェントが作り、レビューが無い
 api_response() {
   case "$1" in
+    repos/example/old-repo) echo '{"full_name":"example/repo"}' ;;
     repos/example/repo) echo '{"full_name":"example/repo"}' ;;
     repos/example/repo/issues\?*page=1) echo '[{"labels":[{"name":"dataset"},{"name":"roadmap"}]},{"pull_request":{},"labels":[{"name":"dataset"}]}]' ;;
     repos/example/repo/issues\?*) echo '[]' ;;
@@ -97,6 +100,19 @@ case "${FAKE_GH_MODE:-unauth}" in
   down) is_probe "$@" && succeed "$@"; echo "HTTP 502: Bad Gateway" >&2; exit 1 ;;
   notfound) is_probe "$@" && succeed "$@"; echo "HTTP 404: Not Found" >&2; exit 1 ;;
   nographql) [ "$1 $2" = "pr list" ] && { echo "HTTP 403: Forbidden (https://api.github.com/graphql)" >&2; exit 1; }; succeed "$@" ;;
+  redirect)
+    if [[ "$*" == *"repos/example/old-repo "* ]]; then succeed "$@"; fi
+    if [[ "$*" == *"example/old-repo"* ]]; then echo "fake gh: unredirected old-repo in $*" >&2; exit 1; fi
+    if { [ "$1 $2" = "pr list" ] || [ "$1 $2" = "run list" ]; } && [[ "$*" != *"-R example/repo"* ]]; then
+      echo "fake gh: missing -R example/repo in $*" >&2; exit 1
+    fi
+    succeed "$@"
+    ;;
+  partial_l)
+    if [ "$1 $2" = "pr list" ]; then echo "HTTP 502: Bad Gateway (https://api.github.com/graphql)" >&2; exit 1; fi
+    if [[ "$*" == *"/reviews"* ]]; then echo "HTTP 502: Bad Gateway" >&2; exit 1; fi
+    succeed "$@"
+    ;;
 esac
 FAKE_GH
 chmod +x "$WORK/bin/gh"
@@ -461,6 +477,22 @@ OUT="$WORK/nodeploy.json"
 FAKE_GH_MODE=ok bash "$WORK/default.sh" "$REPO" > "$OUT" 2>/dev/null
 check "デプロイ系ワークフロー 0 件で f.rollback_doc_present が false" "$OUT" '.evidence["f.rollback_doc_present"].value == false'
 check "デプロイ系ワークフロー 0 件で f.deploy_runs は {}（gh を呼ばない）" "$OUT" '.evidence["f.deploy_runs"].value == {} and .evidence["f.deploy_runs"].error == null'
+
+# --- リポジトリ正式名の解決（改名・リダイレクト） ------------------------------
+reset_gh
+OUT="$WORK/redirect.json"
+GH_REPO="example/old-repo" FAKE_GH_MODE=redirect bash "$WORK/default.sh" "$REPO" > "$OUT" 2> "$WORK/redirect.err"
+check "改名解決: header.repository が正式名になる" "$OUT" '.header.repository == "example/repo" and .header.repository_input == "example/old-repo"'
+check "改名解決: collection_errors が空（全 API が正式名に向いた）" "$OUT" '.header.collection_errors == []'
+if grep -q '^警告: リポジトリ名が example/old-repo から example/repo に解決' "$WORK/redirect.err"; then pass "改名解決: stderr に警告が出る"; else fail "改名解決: stderr に警告が出る"; fi
+
+# --- PR 集計の部分失敗（GraphQL 502 → REST 検索成功 → reviews 502） ------------
+reset_gh
+OUT="$WORK/partial-l.json"
+FAKE_GH_MODE=partial_l GH_RETRY_MAX=1 bash "$WORK/default.sh" "$REPO" > "$OUT" 2>/dev/null
+check "部分失敗: l.pr_authors_window は保持される" "$OUT" '(.evidence["l.pr_authors_window"].value | sort_by(.author)) == [{"author": "app/copilot-swe-agent", "count": 1}, {"author": "bob", "count": 1}] and .evidence["l.pr_authors_window"].error == null'
+check "部分失敗: 欠けた統計キーは 0 ではなく null と error" "$OUT" '.evidence["l.pr_review_stats_window"].value == null and (.evidence["l.pr_review_stats_window"].error | test("502")) and .evidence["l.ai_pr_stats_window"].value == null and (.evidence["l.ai_pr_stats_window"].error | test("502"))'
+check "部分失敗: collection_errors は欠けた 2 キーだけ" "$OUT" '(.header.collection_errors | sort) == ["l.ai_pr_stats_window", "l.pr_review_stats_window"]'
 
 if [ "$FAILED" -ne 0 ]; then echo "テストに失敗しました"; exit 1; fi
 echo "すべてのテストに合格しました"

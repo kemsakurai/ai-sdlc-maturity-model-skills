@@ -116,14 +116,17 @@ git clone https://github.com/kemsakurai/ai-sdlc-maturity-model-skills.git /tmp/a
 ├── docs/
 │   └── example-report.md      # 出力例（架空のリポジトリ）
 ├── tests/
-│   ├── template_test.sh       # 証拠収集テンプレートの回帰テスト
-│   └── consistency_test.sh    # 版番号・証拠キーのファイル間の整合性チェック
+│   ├── template_test.sh          # 証拠収集テンプレートの回帰テスト
+│   ├── verify_assessment_test.sh # スコア集計・証拠検査スクリプトの回帰テスト
+│   └── consistency_test.sh       # 版番号・証拠キーのファイル間の整合性チェック
 ├── skills/
 │   └── assessing-ai-sdlc-maturity/
-│       ├── SKILL.md           # スキル本体（手順）
-│       ├── criteria.md        # 判定基準シート
+│       ├── SKILL.md              # スキル本体（手順）
+│       ├── criteria.md           # 判定基準シート
 │       ├── references/
 │       │   └── evidence-keys.md
+│       ├── scripts/
+│       │   └── verify-assessment.sh # スコア集計・検算・証拠 JSON 検査
 │       └── templates/
 │           ├── collect-evidence.template.sh
 │           └── report.template.md   # レポートの雛形

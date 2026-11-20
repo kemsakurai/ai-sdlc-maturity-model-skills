@@ -10,6 +10,7 @@
 {
   "header": {
     "repository": "owner/name",
+    "repository_input": "owner/name",
     "head_sha": "…",
     "evaluated_ref": {
       "branch": "main",
@@ -21,8 +22,8 @@
       "uncommitted_changes": false
     },
     "assessed_at": "YYYY-MM-DD",
-    "criteria_version": "0.3.1",
-    "skill_version": "0.3.1",
+    "criteria_version": "0.3.2",
+    "skill_version": "0.3.2",
     "framework_checked_at": null,
     "window": {"start": "YYYY-MM-DD", "end": "YYYY-MM-DD", "days": 90},
     "last_commit_date": "YYYY-MM-DD",
@@ -40,6 +41,8 @@
 }
 ```
 
+- `repository`：GitHub API（`repos/<owner/name>` の `.full_name`）で解決したリポジトリの正式名。リダイレクト・改名されている場合も、検索・一覧・Actions はこの正式名に向く。`gh` が使えないときは入力名と同じ
+- `repository_input`：環境変数 `GH_REPO` または git リモートから得た元のリポジトリ名（どちらも無ければ `null`）。改名・リダイレクトの追跡用
 - `value`：採点と受け入れ基準に使う値
 - `command`：値を出したコマンドの要約
 - `limit`：`gh` の取得件数の上限。値がこの上限に張り付いているときは、実数がもっと多い可能性がある。検索 API の `total_count` で数えるキーは上限が無いので `null`
@@ -64,7 +67,7 @@
 
 GitHub から取るキー（`b.issues_*`、`f.deploy_runs`、`g.incident_labeled_issues_count`、`h.data_management_labels_count`、`l.*`、`m.*`、`n.retro_prs_window_count`、`p.roadmap_label_count`）は、`gh` が失敗すると取得できない。スクリプトは一時的な失敗（ネットワーク、API の 5xx、レート制限など）に備えて `GH_RETRY_MAX` 回（既定 3）まで試す。未認証・リモートが無い・HTTP 401/403/404 のように再試行しても直らない失敗は、すぐにあきらめる（HTTP 403 でもレート制限なら再試行する）。
 
-GitHub からの取得は REST API（`gh api`、`gh run list`）で行うので、GraphQL API が使えない環境（Claude Code on the web 等）でも取得できる。GraphQL を使うのは `l.*` の PR 一覧だけで、失敗したら REST API（検索 API と PR ごとの API）で取り直す。どちらで取ったかは `l.*` の `command` に入る。bot のログインは、どちらの経路でも `app/<name>` の表記にそろえる。
+GitHub からの取得は REST API（`gh api`、`gh run list`）で行うので、GraphQL API が使えない環境（Claude Code on the web 等）でも取得できる。GraphQL を使うのは `l.*` の PR 一覧だけで、失敗したら REST API（検索 API と PR ごとの API）で取り直す。REST フォールバックで検索 API の一覧だけ取得でき、PR ごとの詳細（`additions` / `reviews`）が途中で失敗（HTTP 502 等）したときは、取得済みの `l.pr_authors_window` は保持し、詳細が欠けた `l.pr_review_stats_window` と `l.ai_pr_stats_window` だけを `null` と `error` にする（0 にしない）。どちらで取ったかは `l.*` の `command` に入る。bot のログインは、どちらの経路でも `app/<name>` の表記にそろえる。
 
 それでも取得できなかったキーは次の形で記録する。値を `0` や `{}` にすると「実態が 0」と読み違えるので、`null` にする。
 
