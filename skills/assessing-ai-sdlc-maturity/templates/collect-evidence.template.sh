@@ -766,7 +766,7 @@ l_merged_prs_graphql() {
 # 一覧が取れれば作成者情報（L_REST_ITEMS_FILE）は確定できるため、詳細取得で部分失敗しても l.pr_authors_window は保持する。
 # $(...) サブシェルから親シェルへ結果とエラーを渡すため、一時ファイルに書き出す。
 l_merged_prs_rest() {
-  local items line num additions reviews rows=""
+  local items line num additions reviews_raw reviews rows=""
   : > "$L_REST_ITEMS_FILE"
   : > "$L_DETAIL_ERR_FILE"
   items="$(gh_retry api -X GET --paginate search/issues -f q="repo:$REPO_NWO type:pr is:merged merged:>=$WINDOW_START" -f per_page=100 \
@@ -779,11 +779,12 @@ l_merged_prs_rest() {
       printf 'PR #%s additions: %s' "$num" "$(gh_last_error)" > "$L_DETAIL_ERR_FILE"
       return 1
     fi
-    if ! reviews="$(gh_retry api "repos/$REPO_NWO/pulls/$num/reviews?per_page=100" \
-      --jq '[.[] | {login: (if .user.type == "Bot" then "app/" + (.user.login | sub("\\[bot\\]$"; "")) else .user.login end), state, at: (.submitted_at // "")}]')"; then
+    if ! reviews_raw="$(gh_retry api --paginate "repos/$REPO_NWO/pulls/$num/reviews?per_page=100" \
+      --jq '.[] | {login: (if .user.type == "Bot" then "app/" + (.user.login | sub("\\[bot\\]$"; "")) else .user.login end), state, at: (.submitted_at // "")}')"; then
       printf 'PR #%s reviews: %s' "$num" "$(gh_last_error)" > "$L_DETAIL_ERR_FILE"
       return 1
     fi
+    reviews="$(printf '%s\n' "$reviews_raw" | jq -s -c '.')"
     rows+="$(printf '%s' "$line" | jq -c --argjson a "$(json_int "$additions")" --argjson rv "$reviews" \
       '{reviews: ($rv | length), comments, additions: $a, author, rv: $rv}')"$'\n'
   done <<< "$(printf '%s\n' "$items" | head -n "$GH_LIMIT")"
