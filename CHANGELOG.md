@@ -2,6 +2,18 @@
 
 このプロジェクトは [Semantic Versioning](https://semver.org/lang/ja/) に従います。スキル本体と判定基準シートは 1 つの版番号を共有します。`criteria.md` の判定基準を変えたときは、以前の採点と比較できなくなるので、少なくともマイナーバージョンを上げます。patch だけが違う版どうしの採点は比較できます。
 
+## [0.3.3] - 2026-11-25
+
+`SKILL.md` の構造を整理し、重複の削減・分岐別リファレンスへの分割・各手順の完了条件の明文化を行いました。`criteria.md` の各レベルの基準文言は変えていないため patch バージョンとし、0.3.0〜0.3.2 の採点と比較できます。
+
+### 変更
+
+- `skills/assessing-ai-sdlc-maturity/SKILL.md`：三重重複していた「クイックリファレンス」「よくある間違い」を廃止して固有ルールを手順内へ統合し、核心ガードレール 8 項目を該当手順に 1 行ずつ残留。各手順（1〜6）にチェック可能な完了条件を追加し、保留項目があるときの `verify-assessment.sh --evidence` 単独実行ルールと相対参照の基準（スキルディレクトリ）を明記した。
+- `skills/assessing-ai-sdlc-maturity/references/collector-setup.md`（新設）：収集スクリプトの探索順序、評価対象コミット確認、既存収集器の互換性検査と救済、初回スキャフォールド、書き込みなしモードと外部 clone（Git LFS 対策）、ヘッダー確認と例外・対話手順を集約した。
+- `skills/assessing-ai-sdlc-maturity/references/reassessment.md`（新設）：フレームワーク差分確認（手順 1 から初回・3 か月以上経過時に明示参照）、再評価、校正の手順を集約した。
+- `README.md` / `README.ja.md`：構成図に新設参照ファイルを追加した。
+- `tests/consistency_test.sh`：`SKILL.md` 内の相対参照ファイル（引数付きコマンド表記を含む）および `#見出し` アンカーの実在チェックを追加した。
+
 ## [0.3.2] - 2026-11-20
 
 Private リポジトリ（`kemsakurai/scrum-graph.dev`、旧名 `scrum-guides`）での 11/16 実証評価（[kemsakurai/scrum-guides#4288](https://github.com/kemsakurai/scrum-guides/issues/4288)）のフィードバックに対応しました。`criteria.md` の各レベルの基準文言自体は変えていないため patch バージョンとし、0.3.0 / 0.3.1 の採点と比較できます。
