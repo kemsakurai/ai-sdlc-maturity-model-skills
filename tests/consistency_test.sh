@@ -51,6 +51,27 @@ echo "     template=$N_TPL evidence-keys.md=$(printf '%s\n' "$KEYS_DOC" | grep -
 if [ "$KEYS_TPL" = "$KEYS_DOC" ]; then pass "テンプレートと evidence-keys.md のキーが一致"; else fail "テンプレートと evidence-keys.md のキーが一致"; diff <(printf '%s\n' "$KEYS_TPL") <(printf '%s\n' "$KEYS_DOC") | sed 's/^/     /'; fi
 if [ "$KEYS_TPL" = "$KEYS_CRIT" ]; then pass "テンプレートと criteria.md のキーが一致"; else fail "テンプレートと criteria.md のキーが一致"; diff <(printf '%s\n' "$KEYS_TPL") <(printf '%s\n' "$KEYS_CRIT") | sed 's/^/     /'; fi
 
+# --- SKILL.md の相対参照ファイル・見出しアンカー ------------------------------
+REF_TARGETS="$(grep -oE '`(criteria\.md|(references|scripts|templates)/[A-Za-z0-9_.-]+(#[^` ]+)?)( [^`]+)?`' "$SKILL_DIR/SKILL.md" | sed -E 's/^`([^` ]+).*`$/\1/' | sort -u)"
+while IFS= read -r ref; do
+  [ -n "$ref" ] || continue
+  ref_file="${ref%%#*}"
+  if [ -f "$SKILL_DIR/$ref_file" ]; then
+    pass "SKILL.md の相対参照 $ref_file が存在する"
+  else
+    fail "SKILL.md の相対参照 $ref_file が存在する"
+    continue
+  fi
+  if [ "$ref" != "$ref_file" ]; then
+    ref_heading="${ref#*#}"
+    if grep -qE "^#+ ${ref_heading}$" "$SKILL_DIR/$ref_file"; then
+      pass "SKILL.md の参照見出し $ref が存在する"
+    else
+      fail "SKILL.md の参照見出し $ref が存在する"
+    fi
+  fi
+done <<< "$REF_TARGETS"
+
 # --- README（英語版と日本語版） -----------------------------------------------
 N_H2_EN="$(grep -c '^## ' "$ROOT/README.md")"
 N_H2_JA="$(grep -c '^## ' "$ROOT/README.ja.md")"

@@ -124,7 +124,9 @@ git clone https://github.com/kemsakurai/ai-sdlc-maturity-model-skills.git /tmp/a
 │       ├── SKILL.md              # スキル本体（手順）
 │       ├── criteria.md           # 判定基準シート
 │       ├── references/
-│       │   └── evidence-keys.md
+│       │   ├── collector-setup.md   # 収集器の探索・初回生成・互換性・書き込みなしモード
+│       │   ├── evidence-keys.md     # 証拠キーの仕様・補完クエリ
+│       │   └── reassessment.md      # 再評価・校正・フレームワーク差分確認
 │       ├── scripts/
 │       │   └── verify-assessment.sh # スコア集計・検算・証拠 JSON 検査
 │       └── templates/

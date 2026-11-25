@@ -22,8 +22,8 @@
       "uncommitted_changes": false
     },
     "assessed_at": "YYYY-MM-DD",
-    "criteria_version": "0.3.2",
-    "skill_version": "0.3.2",
+    "criteria_version": "0.3.3",
+    "skill_version": "0.3.3",
     "framework_checked_at": null,
     "window": {"start": "YYYY-MM-DD", "end": "YYYY-MM-DD", "days": 90},
     "last_commit_date": "YYYY-MM-DD",

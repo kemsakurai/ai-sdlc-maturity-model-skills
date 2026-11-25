@@ -126,7 +126,9 @@ What gets assessed is the files git tracks in your local checkout. If your check
 │       ├── SKILL.md              # the skill itself (steps)
 │       ├── criteria.md           # criteria sheet
 │       ├── references/
-│       │   └── evidence-keys.md
+│       │   ├── collector-setup.md   # collector discovery, scaffolding, compatibility, no-write mode
+│       │   ├── evidence-keys.md     # evidence key reference and fallback queries
+│       │   └── reassessment.md      # re-assessment, calibration, and framework diff checks
 │       ├── scripts/
 │       │   └── verify-assessment.sh # score aggregation and evidence sanity checks
 │       └── templates/
